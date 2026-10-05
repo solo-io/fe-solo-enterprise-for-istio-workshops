@@ -1,0 +1,56 @@
+# Istio Ambient Multicluster Workshop — OpenShift
+
+Hands-on workshop for deploying Solo Enterprise for Istio Ambient Mesh across two OpenShift clusters, using the Bookinfo sample application.
+
+## Versions
+
+| Component | Version |
+|---|---|
+| Istio (Solo) | 1.30.2-solo |
+| Solo Management UI | 0.5.8 |
+| OpenShift | 4.16.0 – 4.19.30 (latest) |
+
+## Prerequisites
+
+- A valid Solo.io license key
+- `solo-istioctl` — see [000-tools.md](000-tools.md)
+- `helm`
+- `oc` (OpenShift CLI)
+- Two OpenShift clusters (4.16+)
+- (Optional) Vegeta for load generation — see [000-tools.md](000-tools.md)
+
+## Labs
+
+| Lab | Topic |
+|---|---|
+| [000-introduction.md](000-introduction.md) | Overview and objectives |
+| [000-prerequisites.md](000-prerequisites.md) | Requirements and image list |
+| [000-tools.md](000-tools.md) | Tool installation |
+| [001-deploy-bookinfo.md](001-deploy-bookinfo.md) | Deploy the Bookinfo application |
+| [002-install-istio-on-cluster1.md](002-install-istio-on-cluster1.md) | Install Istio Ambient on cluster1 |
+| [003-install-istio-on-cluster2.md](003-install-istio-on-cluster2.md) | Install Istio Ambient on cluster2 |
+| [004-enroll-apps-in-the-mesh.md](004-enroll-apps-in-the-mesh.md) | Enroll workloads in the mesh |
+| [005-expose-bookinfo.md](005-expose-bookinfo.md) | Configure the ingress gateway |
+| [006-multicluster.md](006-multicluster.md) | Link the clusters and configure failover |
+| [007-segments.md](007-segments.md) | Namespace isolation with Segments |
+| [008-global-aliases.md](008-global-aliases.md) | Global service aliases |
+| [009-mesh-access-control.md](009-mesh-access-control.md) | Zero-trust access control policies |
+| [010-waypoints.md](010-waypoints.md) | L7 traffic management with waypoints |
+| [011-observability.md](011-observability.md) | Observability — inspecting Istio Ambient metrics |
+| [012-egress.md](012-egress.md) | Egress control with a waypoint |
+| [013-install-solo-ui.md](013-install-solo-ui.md) | Install the Solo Management UI |
+| [014-cleanup.md](014-cleanup.md) | Teardown |
+
+## Getting Started
+
+Every lab runs its commands relative to this directory (`kubectl apply -f bookinfo/...`, `./solo-istioctl`), so change into it first:
+
+```bash
+cd istio-ambient-multicluster-on-openshift
+```
+
+Then work through the labs in order, starting with [000-introduction.md](000-introduction.md).
+
+## Reference
+
+- [Ports used in an Istio ambient mesh](../reference/ambient-ports.md): what to open on firewalls, cloud security groups, and `NetworkPolicy`.

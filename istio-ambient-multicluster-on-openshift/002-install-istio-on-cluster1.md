@@ -1,0 +1,288 @@
+# Install Solo Istio Ambient on cluster1
+
+# Objectives
+- Deploy Istio on Openshift with Helm based install
+- Install Istio Ambient Mesh
+
+![](../images/install-istio-1.png)
+
+## Prerequisites
+- This lab assumes you have read through and completed any setup from the `000` labs
+
+## Set cluster contexts
+In this workshop, you can use your preferred cluster context. To set it, run the following command, replacing cluster1 with your desired context name
+```bash
+export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context name
+export MESH_NAME_CLUSTER1=cluster1    # Recommended to keep as cluster1 for POC
+```
+
+> **KinD users:** KinD automatically prefixes kubecontext names with `kind-`. You can set `KUBECONTEXT_CLUSTER1=kind-<cluster-name>` but keep `MESH_NAME_CLUSTER1=<cluster-name>` (without the `kind-` prefix). The `MESH_NAME_CLUSTER1` value is the Istio network name — it must match the `topology.istio.io/network` label on the `istio-system` namespace and the ztunnel `NETWORK` env var. Mismatching these causes ztunnel to fail VIP lookups, silently bypassing waypoints.
+
+## OpenShift platform prerequisite: OVN-Kubernetes local gateway mode
+
+Ambient mode on OpenShift requires OVN-Kubernetes to run in **local gateway mode** (`routingViaHost: true`). By default, OpenShift's OVN-Kubernetes uses **shared gateway mode**, where pod traffic bypasses the host netfilter stack via OVS. In shared mode, kubelet readiness/liveness probes destined for ambient-enrolled pods are silently dropped because the SNAT and postrouting iptables rules that istio-cni installs in the host network namespace never get hit — the probes appear as `i/o timeout` and pods CrashLoop on liveness failure. This affects the east-west gateway in lab `006` and the Solo UI workloads in lab `013` as well.
+
+Switch the Cluster Network Operator to local gateway mode on cluster1 (one-time, cluster-wide):
+```bash
+oc --context $KUBECONTEXT_CLUSTER1 patch network.operator cluster --type=merge \
+  -p='{"spec":{"defaultNetwork":{"ovnKubernetesConfig":{"gatewayConfig":{"routingViaHost":true}}}}}'
+```
+
+Wait for `ovnkube-node` to roll out the new config (a few minutes; nodes are reconfigured in-place):
+```bash
+oc --context $KUBECONTEXT_CLUSTER1 rollout status -n openshift-ovn-kubernetes ds/ovnkube-node --timeout=300s
+```
+
+Verify:
+```bash
+oc --context $KUBECONTEXT_CLUSTER1 get network.operator cluster \
+  -o jsonpath='{.spec.defaultNetwork.ovnKubernetesConfig.gatewayConfig.routingViaHost}{"\n"}'
+# Expected output: true
+```
+
+> **Reference:** [Istio Ambient — OpenShift platform prerequisites](https://istio.io/latest/docs/ambient/install/platform-prerequisites/)
+
+And export your Solo Trial License Key and Istio version
+```bash
+export SOLO_TRIAL_LICENSE_KEY=<paste-your-key>
+[ -n "$SOLO_TRIAL_LICENSE_KEY" ] || echo "⚠️  SOLO_TRIAL_LICENSE_KEY is not set. Istio installs with an empty license and enterprise features, including multicluster peering, then fail."
+export ISTIO_VERSION=1.30.2
+```
+
+## Install Solo istioctl
+This will be required to use the `istioctl multicluster link` commands
+```bash
+OS=$(uname | tr '[:upper:]' '[:lower:]' | sed -E 's/darwin/osx/')
+ARCH=$(uname -m | sed -E 's/aarch/arm/; s/x86_64/amd64/; s/armv7l/armv7/')
+
+INSTALL_DIR="."
+mkdir -p "$INSTALL_DIR"
+ISTIOCTL_URL="https://storage.googleapis.com/soloio-istio-binaries/release/${ISTIO_VERSION}-solo/istioctl-${ISTIO_VERSION}-solo-${OS}-${ARCH}.tar.gz"
+curl -sSL "$ISTIOCTL_URL" | tar xzf - -C "$INSTALL_DIR"
+mv "${INSTALL_DIR}/istioctl" "${INSTALL_DIR}/solo-istioctl"
+chmod +x "${INSTALL_DIR}/solo-istioctl"
+```
+
+Check the `istioctl version`
+```bash
+./solo-istioctl version
+```
+
+## Generate shared root trust secret
+
+Both clusters must share the same root of trust so that workloads can verify each other's mTLS certificates across cluster boundaries. Generate a self-signed root CA and write it to a local file that will be applied to both clusters:
+```bash
+WORK_DIR=$(mktemp -d)
+
+cat > "$WORK_DIR/root-openssl.cnf" <<'CNFEOF'
+[ req ]
+prompt = no
+distinguished_name = dn
+x509_extensions = v3_ca
+
+[ dn ]
+C  = US
+ST = California
+L  = San Francisco
+O  = MyOrg
+OU = MyUnit
+CN = root-cert
+
+[ v3_ca ]
+basicConstraints = critical, CA:TRUE, pathlen:1
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+CNFEOF
+
+cat > "$WORK_DIR/intermediate-req.cnf" <<'CNFEOF'
+[ req ]
+prompt = no
+distinguished_name = dn
+
+[ dn ]
+C  = US
+ST = California
+L  = San Francisco
+O  = MyOrg
+OU = MyUnit
+CN = istio-intermediate-ca
+CNFEOF
+
+cat > "$WORK_DIR/ca-ext.cnf" <<'CNFEOF'
+[v3_ca]
+basicConstraints = critical, CA:TRUE, pathlen:0
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+CNFEOF
+
+openssl req -x509 -sha256 -nodes -days 3650 \
+  -newkey rsa:2048 \
+  -keyout "$WORK_DIR/root-key.pem" \
+  -out "$WORK_DIR/root-cert.pem" \
+  -config "$WORK_DIR/root-openssl.cnf" \
+  -extensions v3_ca
+
+openssl req -new -nodes -newkey rsa:2048 \
+  -keyout "$WORK_DIR/ca-key.pem" \
+  -out "$WORK_DIR/ca.csr" \
+  -config "$WORK_DIR/intermediate-req.cnf"
+
+openssl x509 -req -sha256 -days 3650 \
+  -in "$WORK_DIR/ca.csr" \
+  -CA "$WORK_DIR/root-cert.pem" \
+  -CAkey "$WORK_DIR/root-key.pem" \
+  -CAcreateserial \
+  -out "$WORK_DIR/ca-cert.pem" \
+  -extfile "$WORK_DIR/ca-ext.cnf" \
+  -extensions v3_ca
+
+cat "$WORK_DIR/ca-cert.pem" "$WORK_DIR/root-cert.pem" > "$WORK_DIR/cert-chain.pem"
+
+cat <<EOF > shared-root-trust-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cacerts
+  namespace: istio-system
+type: Opaque
+data:
+  ca-cert.pem: $(base64 < "$WORK_DIR/ca-cert.pem" | tr -d '\n')
+  ca-key.pem: $(base64 < "$WORK_DIR/ca-key.pem" | tr -d '\n')
+  cert-chain.pem: $(base64 < "$WORK_DIR/cert-chain.pem" | tr -d '\n')
+  root-cert.pem: $(base64 < "$WORK_DIR/root-cert.pem" | tr -d '\n')
+EOF
+
+rm -rf "$WORK_DIR"
+echo "Generated shared-root-trust-secret.yaml"
+```
+
+## Create istio-system namespace and apply shared root trust secret in cluster1
+```bash
+kubectl create namespace istio-system --context $KUBECONTEXT_CLUSTER1 --dry-run=client -o yaml | kubectl apply --context $KUBECONTEXT_CLUSTER1 -f -
+kubectl apply -f shared-root-trust-secret.yaml --context $KUBECONTEXT_CLUSTER1
+```
+
+## Install Istio using Helm on cluster1
+
+Install istio-base
+```bash
+helm upgrade --kube-context $KUBECONTEXT_CLUSTER1 --install istio-base oci://us-docker.pkg.dev/soloio-img/istio-helm/base -n istio-system --version $ISTIO_VERSION-solo --create-namespace
+
+kubectl label namespace istio-system topology.istio.io/network=$MESH_NAME_CLUSTER1 --context $KUBECONTEXT_CLUSTER1
+```
+
+Install Kubernetes Gateway CRDs if required
+
+**NOTE:** If you are using OpenShift >4.19 the Gateway API CRDs are already installed by default
+```bash
+kubectl get crd gateways.gateway.networking.k8s.io --context $KUBECONTEXT_CLUSTER1 &> /dev/null || \
+  { kubectl --context $KUBECONTEXT_CLUSTER1 apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml; }
+```
+
+Install istio-cni
+```bash
+helm upgrade --kube-context $KUBECONTEXT_CLUSTER1 --install istio-cni oci://us-docker.pkg.dev/soloio-img/istio-helm/cni \
+-n kube-system \
+--version=$ISTIO_VERSION-solo \
+-f -<<EOF
+profile: ambient
+ambient:
+  dnsCapture: true
+excludeNamespaces:
+  - istio-system
+  - kube-system
+global:
+  platform: openshift
+  hub: us-docker.pkg.dev/soloio-img/istio
+  tag: $ISTIO_VERSION-solo
+  variant: distroless
+EOF
+```
+
+Wait for rollout to complete
+```bash
+kubectl rollout status ds/istio-cni-node -n kube-system --watch --timeout=90s --context $KUBECONTEXT_CLUSTER1
+```
+
+Install istiod
+```bash
+helm upgrade --kube-context $KUBECONTEXT_CLUSTER1 --install istiod oci://us-docker.pkg.dev/soloio-img/istio-helm/istiod \
+-n istio-system \
+--version=$ISTIO_VERSION-solo \
+-f -<<EOF
+profile: ambient
+global:
+  platform: openshift
+  hub: us-docker.pkg.dev/soloio-img/istio
+  tag: $ISTIO_VERSION-solo
+  variant: distroless
+  multiCluster:
+    clusterName: $MESH_NAME_CLUSTER1
+  network: $MESH_NAME_CLUSTER1
+meshConfig:
+  trustDomain: $MESH_NAME_CLUSTER1.local
+env:
+  # Enables assigning multi-cluster services an IP address
+  PILOT_ENABLE_IP_AUTOALLOCATE: "true"
+  # Disable selecting workload entries for local service routing.
+  # Required for Solo Istio multicluster functionality.
+  PILOT_ENABLE_K8S_SELECT_WORKLOAD_ENTRIES: "false"
+  # Required if you have distinct trust domains per-cluster
+  PILOT_SKIP_VALIDATE_TRUST_DOMAIN: "true"
+  # Enables experimental Gateway API features to be used
+  #PILOT_ENABLE_ALPHA_GATEWAY_API: "true"
+# Required to enable multi-cluster support
+platforms:
+  peering:
+    enabled: true
+license:
+  value: $SOLO_TRIAL_LICENSE_KEY
+EOF
+```
+
+Wait for rollout to complete
+```bash
+kubectl rollout status deploy/istiod -n istio-system --watch --timeout=90s --context $KUBECONTEXT_CLUSTER1
+```
+
+Install ztunnel
+```bash
+helm upgrade --kube-context $KUBECONTEXT_CLUSTER1 --install ztunnel oci://us-docker.pkg.dev/soloio-img/istio-helm/ztunnel \
+-n kube-system \
+--version=$ISTIO_VERSION-solo \
+-f -<<EOF
+profile: ambient
+logLevel: info
+global:
+  platform: openshift
+  hub: us-docker.pkg.dev/soloio-img/istio
+  tag: $ISTIO_VERSION-solo
+  variant: distroless
+resources:
+  requests:
+      cpu: 500m
+      memory: 2048Mi
+istioNamespace: istio-system
+env:
+  L7_ENABLED: "true"
+  # Required if you have distinct trust domains per-cluster
+  SKIP_VALIDATE_TRUST_DOMAIN: "true"
+# Must match the setting during Istio installation
+network: $MESH_NAME_CLUSTER1
+multiCluster:
+  clusterName: $MESH_NAME_CLUSTER1
+EOF
+```
+
+Wait for rollout to complete
+```bash
+kubectl rollout status ds/ztunnel -n kube-system --watch --timeout=90s --context $KUBECONTEXT_CLUSTER1
+```
+
+## Next Steps
+At this point we have completed the following objectives
+- Deployed Istio on Openshift with Helm based install on cluster1
+- Installed Istio Ambient Mesh on cluster1
+
+In the next step `003` we will install Istio on cluster2
