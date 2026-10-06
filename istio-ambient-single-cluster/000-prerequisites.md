@@ -10,6 +10,11 @@
 
 ### Repos/Images
 
+> **Air-gapped clusters:** [`lib/mirror-images.sh`](../lib/mirror-images.sh) copies every image listed below, with all
+> architectures, to your registry as `<registry>/<name>:<tag>`. Run it from the repo root. It is a dry run until you add `--push`:
+> `lib/mirror-images.sh <registry> istio-ambient-single-cluster --push`.
+> Point Istio at the mirror with `global.hub=<registry>`.
+
 **Helm Repos**
 
 Solo Istio Helm Charts
