@@ -3,7 +3,7 @@
 
 #### Solo's `istioctl` Binary:
 ```bash
-ISTIO_VERSION=1.30.2
+ISTIO_VERSION=1.30.5
 OS=$(uname | tr '[:upper:]' '[:lower:]' | sed -E 's/darwin/osx/')
 ARCH=$(uname -m | sed -E 's/aarch/arm/; s/x86_64/amd64/; s/armv7l/armv7/')
 

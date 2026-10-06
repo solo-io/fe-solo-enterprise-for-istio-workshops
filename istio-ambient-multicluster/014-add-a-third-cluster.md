@@ -39,7 +39,7 @@ And re-export your Solo Trial License Key and Istio version, if they are no long
 ```bash
 export SOLO_TRIAL_LICENSE_KEY=<paste-your-key>
 [ -n "$SOLO_TRIAL_LICENSE_KEY" ] || echo "⚠️  SOLO_TRIAL_LICENSE_KEY is not set. Istio installs with an empty license and enterprise features, including multicluster peering, then fail."
-export ISTIO_VERSION=1.30.2
+export ISTIO_VERSION=1.30.5
 ```
 
 ## Merge cluster3's kubeconfig into your existing config
@@ -269,7 +269,7 @@ Re-run the link command with all three contexts. It is idempotent and will fill 
 
 Export the Istio version and each cluster's network name — these should match the `MESH_NAME_CLUSTER*` values used to install Istio in labs `002`/`003` and above.
 ```bash
-export ISTIO_VERSION=1.30.2
+export ISTIO_VERSION=1.30.5
 export MESH_NAME_CLUSTER1=cluster1
 export MESH_NAME_CLUSTER2=cluster2
 export MESH_NAME_CLUSTER3=cluster3

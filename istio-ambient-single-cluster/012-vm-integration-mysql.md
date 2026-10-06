@@ -45,7 +45,7 @@ This relaxes one check: anyone holding a non-expiring service account token for 
 ```bash
 helm upgrade --kube-context $KUBECONTEXT_CLUSTER1 istiod oci://us-docker.pkg.dev/soloio-img/istio-helm/istiod \
   -n istio-system \
-  --version 1.30.2-solo \
+  --version 1.30.5-solo \
   --reuse-values \
   --set-string env.REQUIRE_3P_TOKEN=false
 
@@ -189,7 +189,7 @@ docker run -d --name db-vm-ztunnel \
   -e HOSTNAME=db-vm \
   -e BOOTSTRAP_TOKEN="$(cat ./vm-db-tokens/bootstrap.token)" \
   -v "$PWD/vm-db-config:/etc/ztunnel:ro" \
-  us-docker.pkg.dev/soloio-img/istio/ztunnel:1.30.2-solo-distroless
+  us-docker.pkg.dev/soloio-img/istio/ztunnel:1.30.5-solo-distroless
 ```
 
 Check that ztunnel connected to istiod, accepted the license, and provisioned a listener for `mysql`:

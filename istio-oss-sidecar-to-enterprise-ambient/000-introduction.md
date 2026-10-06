@@ -33,7 +33,7 @@ Now that workloads are in ambient mode, apply Istio AuthorizationPolicy to estab
 
 - Kubernetes ≥ 1.29
 - OSS Istio 1.29.5 (start)
-- Solo Istio 1.30.2-solo (target)
+- Solo Istio 1.30.5-solo (target)
 
 ## License Key Details
 This workshop requires a Solo Trial License Key, exported as `SOLO_TRIAL_LICENSE_KEY` in lab `004`.

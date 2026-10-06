@@ -10,19 +10,24 @@
 
 ### Repos/Images:
 
+> **Air-gapped clusters:** [`lib/mirror-images.sh`](../lib/mirror-images.sh) copies every image listed below, with all
+> architectures, to your registry as `<registry>/<name>:<tag>`. Run it from the repo root. It is a dry run until you add `--push`:
+> `lib/mirror-images.sh <registry> istio-ambient-multicluster --push`.
+> Point Istio at the mirror with `global.hub=<registry>`.
+
 **Helm Repos**
 
 Solo Istio Helm Charts
 ```bash
-helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/base --version 1.30.2-solo
+helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/base --version 1.30.5-solo
 
-helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/istiod --version 1.30.2-solo
+helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/istiod --version 1.30.5-solo
 
-helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/cni --version 1.30.2-solo
+helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/cni --version 1.30.5-solo
 
-helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/gateway --version 1.30.2-solo
+helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/gateway --version 1.30.5-solo
 
-helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/ztunnel --version 1.30.2-solo
+helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/ztunnel --version 1.30.5-solo
 ```
 
 Solo Management UI Helm Charts (used in lab `013`)
@@ -34,10 +39,10 @@ helm pull oci://us-docker.pkg.dev/solo-public/solo-enterprise-helm/charts/relay 
 
 **Istio Images:** 
 ```bash
-docker pull us-docker.pkg.dev/soloio-img/istio/install-cni:1.30.2-solo-distroless
-docker pull us-docker.pkg.dev/soloio-img/istio/pilot:1.30.2-solo-distroless
-docker pull us-docker.pkg.dev/soloio-img/istio/proxyv2:1.30.2-solo-distroless
-docker pull us-docker.pkg.dev/soloio-img/istio/ztunnel:1.30.2-solo-distroless
+docker pull us-docker.pkg.dev/soloio-img/istio/install-cni:1.30.5-solo-distroless
+docker pull us-docker.pkg.dev/soloio-img/istio/pilot:1.30.5-solo-distroless
+docker pull us-docker.pkg.dev/soloio-img/istio/proxyv2:1.30.5-solo-distroless
+docker pull us-docker.pkg.dev/soloio-img/istio/ztunnel:1.30.5-solo-distroless
 ```
 
 **Book Info Images:**
@@ -51,7 +56,7 @@ docker pull docker.io/istio/examples-bookinfo-reviews-v3:1.20.2
 
 **Istio Echo App Image (gRPC client and server for labs `015` and `016`):**
 ```bash
-docker pull docker.io/istio/app:1.30.2
+docker pull docker.io/istio/app:1.30.5
 ```
 
 **Solo Management UI Images (Optional, we can upload later for phase 2 of POC)**

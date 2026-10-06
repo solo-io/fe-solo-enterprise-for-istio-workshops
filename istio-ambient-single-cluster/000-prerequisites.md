@@ -10,27 +10,32 @@
 
 ### Repos/Images
 
+> **Air-gapped clusters:** [`lib/mirror-images.sh`](../lib/mirror-images.sh) copies every image listed below, with all
+> architectures, to your registry as `<registry>/<name>:<tag>`. Run it from the repo root. It is a dry run until you add `--push`:
+> `lib/mirror-images.sh <registry> istio-ambient-single-cluster --push`.
+> Point Istio at the mirror with `global.hub=<registry>`.
+
 **Helm Repos**
 
 Solo Istio Helm Charts
 ```bash
-helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/base --version 1.30.2-solo
+helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/base --version 1.30.5-solo
 
-helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/istiod --version 1.30.2-solo
+helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/istiod --version 1.30.5-solo
 
-helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/cni --version 1.30.2-solo
+helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/cni --version 1.30.5-solo
 
-helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/gateway --version 1.30.2-solo
+helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/gateway --version 1.30.5-solo
 
-helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/ztunnel --version 1.30.2-solo
+helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/ztunnel --version 1.30.5-solo
 ```
 
 **Istio Images:**
 ```bash
-docker pull us-docker.pkg.dev/soloio-img/istio/install-cni:1.30.2-solo-distroless
-docker pull us-docker.pkg.dev/soloio-img/istio/pilot:1.30.2-solo-distroless
-docker pull us-docker.pkg.dev/soloio-img/istio/proxyv2:1.30.2-solo-distroless
-docker pull us-docker.pkg.dev/soloio-img/istio/ztunnel:1.30.2-solo-distroless
+docker pull us-docker.pkg.dev/soloio-img/istio/install-cni:1.30.5-solo-distroless
+docker pull us-docker.pkg.dev/soloio-img/istio/pilot:1.30.5-solo-distroless
+docker pull us-docker.pkg.dev/soloio-img/istio/proxyv2:1.30.5-solo-distroless
+docker pull us-docker.pkg.dev/soloio-img/istio/ztunnel:1.30.5-solo-distroless
 ```
 
 **Bookinfo Images:**
@@ -45,7 +50,7 @@ docker pull docker.io/istio/examples-bookinfo-productpage-v1:1.20.2
 
 **Istio Echo App Image (gRPC client and server for lab `010`):**
 ```bash
-docker pull docker.io/istio/app:1.30.2
+docker pull docker.io/istio/app:1.30.5
 ```
 
 **VM integration images (labs `011` and `012`):**
@@ -53,4 +58,4 @@ docker pull docker.io/istio/app:1.30.2
 docker pull docker.io/nicolaka/netshoot:latest
 docker pull docker.io/library/mysql:8.4
 ```
-Lab `011` also uses `docker.io/istio/app:1.30.2` and `us-docker.pkg.dev/soloio-img/istio/ztunnel:1.30.2-solo-distroless`, listed above. Lab `012` uses the same ztunnel image.
+Lab `011` also uses `docker.io/istio/app:1.30.5` and `us-docker.pkg.dev/soloio-img/istio/ztunnel:1.30.5-solo-distroless`, listed above. Lab `012` uses the same ztunnel image.

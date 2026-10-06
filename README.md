@@ -45,7 +45,7 @@ Hands-on workshops for deploying and operating **Solo Enterprise for Istio** wit
 
 | Component | Version |
 |---|---|
-| Istio (Solo) | 1.30.2-solo |
+| Istio (Solo) | 1.30.5-solo |
 | Solo Management UI | 0.5.8 |
 | Kubernetes | ≥ 1.29 |
 | OpenShift | 4.16.0 – 4.19.x |

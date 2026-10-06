@@ -61,7 +61,7 @@ Export your Solo.io license key and Istio version:
 ```bash
 export SOLO_TRIAL_LICENSE_KEY=<paste-your-key>
 [ -n "$SOLO_TRIAL_LICENSE_KEY" ] || echo "⚠️  SOLO_TRIAL_LICENSE_KEY is not set. Istio installs with an empty license and enterprise features, including multicluster peering, then fail."
-export ISTIO_VERSION=1.30.2
+export ISTIO_VERSION=1.30.5
 ```
 
 ## Install Solo `istioctl`
