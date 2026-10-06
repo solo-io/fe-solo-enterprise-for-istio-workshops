@@ -21,7 +21,7 @@
 
 ## Validated on
 - GKE (Kubernetes 1.29+)
-- Istio 1.30.2-solo
+- Istio 1.30.5-solo
 - vind on Docker Desktop (arm64) for labs `011` and `012`
 
 ## License Key Details

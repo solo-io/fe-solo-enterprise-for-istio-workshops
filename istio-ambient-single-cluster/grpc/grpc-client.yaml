@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
       - name: grpc-client
-        image: docker.io/istio/app:1.30.2@sha256:a72259de197c94697d15f0a87cffeadb31ad993dd9092f0b926099f4be01ca47
+        image: docker.io/istio/app:1.30.5
         imagePullPolicy: IfNotPresent
         args:
         - --port=8080

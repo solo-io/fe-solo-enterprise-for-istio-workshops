@@ -48,7 +48,7 @@ This relaxes one check: anyone holding a non-expiring service account token for 
 ```bash
 helm upgrade --kube-context $KUBECONTEXT_CLUSTER1 istiod oci://us-docker.pkg.dev/soloio-img/istio-helm/istiod \
   -n istio-system \
-  --version 1.30.2-solo \
+  --version 1.30.5-solo \
   --reuse-values \
   --set-string env.REQUIRE_3P_TOKEN=false
 
@@ -93,7 +93,7 @@ if [ -z "$VM_DOCKER_NETWORK" ]; then
 else
   docker rm -f vm-1-ztunnel vm-1-app vm-1 2>/dev/null
   docker run -d --name vm-1 --hostname vm-1 --network "$VM_DOCKER_NETWORK" nicolaka/netshoot sleep infinity
-  docker run -d --name vm-1-app --network container:vm-1 docker.io/istio/app:1.30.2 --port 8080 --version vm-1
+  docker run -d --name vm-1-app --network container:vm-1 docker.io/istio/app:1.30.5 --port 8080 --version vm-1
 
   export VM_IP=$(docker inspect vm-1 --format "{{(index .NetworkSettings.Networks \"$VM_DOCKER_NETWORK\").IPAddress}}")
   echo "VM IP: $VM_IP"
@@ -170,7 +170,7 @@ docker run -d --name vm-1-ztunnel \
   -e HOSTNAME=vm-1 \
   -e BOOTSTRAP_TOKEN="$(cat ./vm-tokens/bootstrap.token)" \
   -v "$PWD/vm-config:/etc/ztunnel:ro" \
-  us-docker.pkg.dev/soloio-img/istio/ztunnel:1.30.2-solo-distroless
+  us-docker.pkg.dev/soloio-img/istio/ztunnel:1.30.5-solo-distroless
 ```
 
 Check that ztunnel connected to istiod, accepted the license, and provisioned a listener for `app1`:

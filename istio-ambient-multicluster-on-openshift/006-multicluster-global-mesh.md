@@ -65,7 +65,7 @@ You can link the clusters with either the Solo `istioctl` CLI or the `peering` H
 
 Export the Istio version and each cluster's network name. These should match the `MESH_NAME_CLUSTER1`/`MESH_NAME_CLUSTER2` values used to install Istio in labs `002`/`003`
 ```bash
-export ISTIO_VERSION=1.30.2
+export ISTIO_VERSION=1.30.5
 export MESH_NAME_CLUSTER1=cluster1
 export MESH_NAME_CLUSTER2=cluster2
 ```

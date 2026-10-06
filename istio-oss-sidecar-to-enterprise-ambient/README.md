@@ -10,7 +10,7 @@ A hands-on migration workshop: start with open-source Istio in **sidecar mode** 
 |---|---|
 | **Platform** | Kubernetes (single cluster) |
 | **Starting point** | OSS Istio 1.29.5 (sidecar mode) |
-| **Target** | Solo Istio 1.30.2-solo (ambient mode) |
+| **Target** | Solo Istio 1.30.5-solo (ambient mode) |
 
 ## Three-Phase Journey
 
@@ -49,7 +49,7 @@ A hands-on migration workshop: start with open-source Istio in **sidecar mode** 
 | Component | Version |
 |---|---|
 | OSS Istio (start) | 1.29.5 |
-| Solo Istio (target) | 1.30.2-solo |
+| Solo Istio (target) | 1.30.5-solo |
 | Gateway API | v1.5.0 |
 | Kubernetes | ≥ 1.29 |
 
