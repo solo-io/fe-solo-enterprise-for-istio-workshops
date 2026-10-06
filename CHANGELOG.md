@@ -1,5 +1,9 @@
 # Changelog
 
+0.0.2 - (10-6-26)
+---
+- Add `style-guide.md`: lab authoring conventions audited from the full workshop corpus (skeleton, command idioms, verification, cleanup, sibling-workshop sync, repo maintenance checklist)
+
 0.0.1 - (10-6-26)
 ---
 - Bump Solo Istio from `1.30.2-solo` to `1.30.5-solo` across all workshops (Helm charts, `-solo-distroless` images, `ISTIO_VERSION` exports, version tables)

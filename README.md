@@ -18,6 +18,7 @@ Hands-on workshops for deploying and operating **Solo Enterprise for Istio** wit
 
 | Page | Description |
 |---|---|
+| [`style-guide.md`](style-guide.md) | Conventions for writing new labs: skeleton, command idioms, verification, cleanup, and the maintenance checklist. |
 | [`reference/ambient-ports.md`](reference/ambient-ports.md) | Every port an ambient mesh uses, grouped by data plane, telemetry, and control plane. The list to hand to whoever owns your firewalls, security groups, and `NetworkPolicy`. |
 
 ## Use Cases Covered
