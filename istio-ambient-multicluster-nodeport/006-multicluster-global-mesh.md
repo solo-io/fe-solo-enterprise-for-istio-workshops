@@ -26,7 +26,7 @@ export MESH_NAME_CLUSTER2=cluster2    # Recommended to keep as cluster2 for POC
 
 ## Background
 
-This lab follows Solo's multi-cluster NodePort reference architecture. Peering needs two Gateways in each cluster:
+Each cluster holds two Gateways for peering:
 
 | Gateway | Class | What it represents |
 |---|---|---|
@@ -47,7 +47,7 @@ kubectl create ns istio-gateways --context $KUBECONTEXT_CLUSTER1 --dry-run=clien
 kubectl create ns istio-gateways --context $KUBECONTEXT_CLUSTER2 --dry-run=client -o yaml | kubectl apply --context $KUBECONTEXT_CLUSTER2 -f -
 ```
 
-Use Solo `istioctl` to generate the east-west gateways, and add the `networking.istio.io/service-type: NodePort` annotation before you apply them. The annotation makes Istio create the `istio-eastwest` Service as a `NodePort`. Without it, `expose` creates a `LoadBalancer` Service, and on a cluster with a load balancer controller that provisions a cloud load balancer for the istiod and HBONE ports.
+Use Solo `istioctl` to generate the east-west gateways, and add the `networking.istio.io/service-type: NodePort` annotation before you apply them. The annotation makes Istio create the `istio-eastwest` Service as a `NodePort`. Without the annotation, `expose` creates a `LoadBalancer` Service, and a cluster with a load balancer controller then provisions a cloud load balancer for the istiod and HBONE ports.
 ```bash
 for context in $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2; do
   ./solo-istioctl multicluster expose --namespace istio-gateways --context $context --generate \
@@ -92,11 +92,7 @@ Each cluster now has a NodePort for HBONE (`15008`) and one for xDS (`15012`). I
 
 ## Peer the clusters over NodePort
 
-For each direction, the function below uses `kubectl` to:
-
-- Read the peer's HBONE and xDS NodePorts from its `istio-eastwest` Service.
-- Read the InternalIPs of the peer nodes that run an `istio-eastwest` pod, skipping pods that are still terminating after a rollout. If `PEER_NODE_SELECTOR` is set, read the InternalIPs of the peer nodes that match that label selector instead (see the production note after the block).
-- Apply the `istio-remote-peer-<peer>` Gateway in the local cluster with those addresses and ports. The name, trust domain and network come from the peer's mesh name, not from its kubectl context.
+The function below applies the `istio-remote-peer-<peer>` Gateway for one direction. Its addresses are the InternalIPs of the peer nodes that host a running `istio-eastwest` pod, skipping pods still terminating after a rollout. Set `PEER_NODE_SELECTOR` to use the nodes that match that label selector instead (see the production note after the block). The Gateway name, trust domain and network come from the peer's mesh name, not from its kubectl context.
 
 ```bash
 apply_remote_peer() {
@@ -233,7 +229,7 @@ Expected output (abridged):
      ✅ Connected to cluster2 via 172.30.0.5
 ```
 
-The `istio-eastwest` address is the ClusterIP of the NodePort Service. Peers do not use it. They connect through the node IP and NodePort in their `istio-remote-peer-<peer>` Gateway.
+The check reports the ClusterIP of the `istio-eastwest` Service. Peers connect through the node IP and NodePort in their `istio-remote-peer-<peer>` Gateway.
 
 Confirm in the istiod logs that each cluster finished its first sync with the peer
 ```bash
@@ -249,11 +245,10 @@ Expected output (one block per cluster):
 
 ## Configure a global service
 
-To make `productpage` available across both clusters, we apply two things to the service in each cluster:
+Label and annotate the `productpage` Service in each cluster:
 
-- **`solo.io/service-scope=global`**: this label marks the service as globally scoped. Istio's multicluster controller detects it and generates a `ServiceEntry` in each cluster, which gives the service a stable cross-cluster hostname in the form `<service>.<namespace>.mesh.internal`. Workloads in either cluster can then reach the service without knowing which cluster it lives on.
-
-- **`networking.istio.io/traffic-distribution=PreferNetwork`**: this annotation tells Istio to prefer instances in the same network (the local cluster) before it fails over to the remote cluster. This avoids cross-cluster traffic while a healthy local instance is available.
+- `solo.io/service-scope=global`: Istio generates a `ServiceEntry` in each cluster with the hostname `<service>.<namespace>.mesh.internal`. Workloads in either cluster reach the service through that hostname, whichever cluster runs it.
+- `networking.istio.io/traffic-distribution=PreferNetwork`: Istio sends traffic to instances in the local network (the local cluster) and fails over to the remote cluster when no healthy local instance is left.
 
 ```bash
 for context in $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2; do
@@ -328,7 +323,7 @@ Expected output:
    2 cluster1
 ```
 
-All traffic is served from cluster1. You can also see this in the browser: the **Reviews** section on the productpage shows `cluster1`, because lab `001` set the `CLUSTER_NAME` environment variable on the reviews deployments.
+cluster1 served the request. The Reviews section of the productpage in a browser also shows `cluster1`, because lab `001` set the `CLUSTER_NAME` environment variable on the reviews deployments.
 
 ## Failover productpage on cluster1
 
@@ -361,9 +356,7 @@ Expected output (one line per request):
 [pod/ztunnel-tkq6n/istio-proxy] 2026-10-12T16:20:45.471857Z	info	http access	request complete	src.addr=10.244.2.15:33008 src.workload="ingress-istio" src.namespace="istio-system" src.identity="spiffe://cluster1.local/ns/istio-system/sa/ingress-istio" dst.addr=10.244.2.2:15008 dst.hbone_addr=productpage.bookinfo-frontends.mesh.internal:9080 dst.service="productpage.bookinfo-frontends.mesh.internal" dst.workload="productpage-v1-59c74584cf-c928t" dst.namespace="bookinfo-frontends" dst.identity="spiffe://cluster2.local/ns/bookinfo-frontends/sa/bookinfo-productpage" direction="inbound" method=GET path="/productpage" protocol=HTTP1 response_code=200 host="172.30.0.3:32283" user_agent="curl/8.10.1" request_id="10f1a29f-d0e1-43dd-8332-2b10e57d44f8" duration="28ms"
 ```
 
-**`src.identity` and `dst.identity`**: the caller is the cluster1 ingress gateway (`cluster1.local` trust domain) and the callee is productpage in cluster2 (`cluster2.local`). The request crossed clusters with mTLS, and each side kept its own trust domain.
-
-**`dst.service`**: the request was addressed to the global hostname `productpage.bookinfo-frontends.mesh.internal`, not to a cluster-local name.
+In the log line, `src.identity` is the cluster1 ingress gateway (`cluster1.local` trust domain) and `dst.identity` is productpage in cluster2 (`cluster2.local`). The request crossed clusters over mTLS, and each side kept its own trust domain. `dst.service` is the global hostname `productpage.bookinfo-frontends.mesh.internal`.
 
 ## Restore productpage on cluster1
 

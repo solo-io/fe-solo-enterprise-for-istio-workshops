@@ -39,8 +39,8 @@ Useful commands:
 ./solo-istioctl waypoint
 ```
 
-> **Note:** this workshop does not use `./solo-istioctl multicluster link`. In 1.28 it needs a LoadBalancer address on the
-> east-west gateway. Lab `006` applies the remote-peer Gateways with `kubectl` instead.
+> **Note:** lab `006` applies the remote-peer Gateways with `kubectl`. In 1.28, `./solo-istioctl multicluster link`
+> needs a LoadBalancer address on the east-west gateway.
 
 ## Optional Tools
 #### K9s (CLI K8s control)

@@ -1,7 +1,7 @@
 # Additional Services used only in lab 010 (L7 Traffic Management with Waypoints).
 # Apply at the start of that lab and remove during cleanup.
 ---
-# Selects only reviews-v3 (red stars) — the version engineering deemed most stable
+# Selects only reviews-v3 (red stars), the version engineering deemed most stable
 apiVersion: v1
 kind: Service
 metadata:
@@ -18,7 +18,7 @@ spec:
     app: reviews
     version: v3
 ---
-# Selects only reviews-v2 (black stars) — routed to premium users via header match
+# Selects only reviews-v2 (black stars), routed to premium users via header match
 apiVersion: v1
 kind: Service
 metadata:

@@ -1,6 +1,6 @@
 ## Cleanup
 
-Uninstall Istio and the Bookinfo application on `cluster1` and `cluster2` by running this for loop
+Uninstall Istio and the Bookinfo application on `cluster1` and `cluster2`. Set the contexts first
 
 ```bash
 export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context name

@@ -6,7 +6,7 @@
 5. `openssl` available in your shell. Lab `002` uses it to generate the shared root trust CA. macOS and Linux include it by default. Windows users must use WSL or Git Bash.
 6. If you want to push local traffic easily install Vegeta as well ([Vegeta installation](000-tools.md#vegeta-cli-load-generator))
 
-> **Network:** peering uses NodePorts, not LoadBalancers. The nodes of each cluster must reach the node InternalIPs of the other cluster on the NodePort range (default `30000-32767`), for the two NodePorts that map to **15008** (HBONE data plane) and **15012** (xDS/CA and registry sync) on the east-west gateway. Full list: [Ports used in an Istio ambient mesh](../reference/ambient-ports.md).
+> **Network:** the clusters peer over NodePorts. The nodes of each cluster must reach the node InternalIPs of the other cluster on the NodePort range (default `30000-32767`), for the two NodePorts that map to **15008** (HBONE data plane) and **15012** (xDS/CA and registry sync) on the east-west gateway. Full list: [Ports used in an Istio ambient mesh](../reference/ambient-ports.md).
 
 ### Repos/Images:
 

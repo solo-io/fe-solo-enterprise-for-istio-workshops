@@ -1,6 +1,6 @@
 # Istio Ambient Multicluster NodePort Workshop: Kubernetes
 
-Hands-on workshop for deploying Solo Enterprise for Istio Ambient Mesh across two Kubernetes clusters that are peered through NodePort east-west gateways, with no LoadBalancer. It uses the Bookinfo sample application.
+Hands-on workshop for deploying Solo Enterprise for Istio Ambient Mesh across two Kubernetes clusters peered through NodePort east-west gateways. It uses the Bookinfo sample application.
 
 ## Versions
 
