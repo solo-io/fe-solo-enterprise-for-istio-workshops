@@ -12,6 +12,7 @@ Hands-on workshops for deploying and operating **Solo Enterprise for Istio** wit
 | [`istio-ambient-single-cluster-on-openshift`](istio-ambient-single-cluster-on-openshift/) | OpenShift | 1 | Single-cluster ambient mesh on OpenShift — ingress, egress, waypoints, observability with OpenShift User Workload Monitoring, Solo Management UI. |
 | [`istio-ambient-multicluster-on-openshift`](istio-ambient-multicluster-on-openshift/) | OpenShift | 2 | Ambient mesh across two OpenShift clusters — multicluster routing, global service discovery, failover, segments, global aliases, zero-trust access control, egress, waypoints, observability, Solo Management UI. |
 | [`istio-ambient-multicluster`](istio-ambient-multicluster/) | Standard Kubernetes | 2 | Ambient mesh across two standard Kubernetes clusters — multicluster routing, global service discovery, failover, segments, global aliases, zero-trust access control, egress, waypoints, observability, Solo Management UI, cross-cluster gRPC load balancing, service migration between clusters with service takeover. |
+| [`istio-ambient-multicluster-nodeport`](istio-ambient-multicluster-nodeport/) | Standard Kubernetes | 2 | Ambient mesh across two standard Kubernetes clusters peered through NodePort east-west gateways with no LoadBalancer, following Solo's NodePort reference architecture. Multicluster routing, global service discovery, failover. |
 | [`istio-oss-sidecar-to-enterprise-ambient`](istio-oss-sidecar-to-enterprise-ambient/) | Standard Kubernetes | 1 | In-place migration from OSS Istio sidecar to Solo Enterprise Ambient, ingress, egress, waypoints, observability, zero-trust access control |
 
 ## Reference
@@ -23,24 +24,24 @@ Hands-on workshops for deploying and operating **Solo Enterprise for Istio** wit
 
 ## Use Cases Covered
 
-| Use Case | Single-cluster (K8s) | Single-cluster OSS→Ambient (K8s) | Multicluster (K8s) | Single-cluster (OCP) | Multicluster (OCP) |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Sidecars | | ✓ | | | |
-| Migration | | ✓ | | | |
-| Zero Trust (mTLS) | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Ingress | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Egress Control | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Waypoints | ✓ | ✓ | ✓ | ✓ | ✓ |
-| gRPC load balancing | ✓ | | ✓ | | |
-| VM integration | ✓ | | | | |
-| Observability | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Multi-cluster routing | | | ✓ | | ✓ |
-| Global service discovery | | | ✓ | | ✓ |
-| High Availability / Failover | | | ✓ | | ✓ |
-| Multitenancy (segments) | | | ✓ | | ✓ |
-| Global Aliases | | | ✓ | | ✓ |
-| Service migration between clusters (service takeover) | | | ✓ | | |
-| Solo Management UI | ✓ | | ✓ | ✓ | ✓ |
+| Use Case | Single-cluster (K8s) | Single-cluster OSS→Ambient (K8s) | Multicluster (K8s) | Multicluster NodePort (K8s) | Single-cluster (OCP) | Multicluster (OCP) |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Sidecars | | ✓ | | | | |
+| Migration | | ✓ | | | | |
+| Zero Trust (mTLS) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Ingress | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Egress Control | ✓ | ✓ | ✓ | | ✓ | ✓ |
+| Waypoints | ✓ | ✓ | ✓ | | ✓ | ✓ |
+| gRPC load balancing | ✓ | | ✓ | | | |
+| VM integration | ✓ | | | | | |
+| Observability | ✓ | ✓ | ✓ | | ✓ | ✓ |
+| Multi-cluster routing | | | ✓ | ✓ | | ✓ |
+| Global service discovery | | | ✓ | ✓ | | ✓ |
+| High Availability / Failover | | | ✓ | ✓ | | ✓ |
+| Multitenancy (segments) | | | ✓ | | | ✓ |
+| Global Aliases | | | ✓ | | | ✓ |
+| Service migration between clusters (service takeover) | | | ✓ | | | |
+| Solo Management UI | ✓ | | ✓ | | ✓ | ✓ |
 
 ## Versions
 
@@ -50,6 +51,8 @@ Hands-on workshops for deploying and operating **Solo Enterprise for Istio** wit
 | Solo Management UI | 0.5.8 |
 | Kubernetes | ≥ 1.29 |
 | OpenShift | 4.16.0 – 4.19.x |
+
+The `istio-ambient-multicluster-nodeport` workshop runs on Istio `1.28.10-patch0-solo`.
 
 ## Prerequisites
 

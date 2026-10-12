@@ -13,7 +13,7 @@ This guide documents the conventions of this repo so that any author, human or a
 | Path | Purpose |
 |---|---|
 | `README.md` | Repo index: workshop table, reference table, use-case matrix, versions, prerequisites. Updated for every new lab (§15) |
-| `<workshop>/` | One directory per workshop. Five exist: `istio-ambient-single-cluster`, `istio-ambient-single-cluster-on-openshift`, `istio-ambient-multicluster`, `istio-ambient-multicluster-on-openshift`, `istio-oss-sidecar-to-enterprise-ambient` |
+| `<workshop>/` | One directory per workshop. Six exist: `istio-ambient-single-cluster`, `istio-ambient-single-cluster-on-openshift`, `istio-ambient-multicluster`, `istio-ambient-multicluster-on-openshift`, `istio-oss-sidecar-to-enterprise-ambient`, `istio-ambient-multicluster-nodeport` |
 | `<workshop>/README.md` | Workshop index: versions, prerequisites, `## Labs` table, `cd` instruction, reference links |
 | `<workshop>/000-introduction.md`, `000-prerequisites.md`, `000-tools.md` | The three `000` files every workshop has: objectives and license check, requirements and image list, tool installs |
 | `<workshop>/NNN-<name>.md` | Numbered labs, run in order. The last one is always `NNN-cleanup.md` |
@@ -291,7 +291,7 @@ Conventions inside the observability labs:
 
 ## 13. Workshop-variant conventions
 
-The five workshops are **siblings that share lab bodies**. The single-cluster and OpenShift single-cluster `004-expose-bookinfo.md` files are byte-identical for their first sixty lines, and the multicluster pair shares most content. The established pattern is clone-and-substitute with an explicitly scoped delta:
+The six workshops are **siblings that share lab bodies**. The single-cluster and OpenShift single-cluster `004-expose-bookinfo.md` files are byte-identical for their first sixty lines, and the multicluster pair shares most content. The established pattern is clone-and-substitute with an explicitly scoped delta:
 
 - **OpenShift variants** differ only where the platform forces it: `oc adm policy add-scc-to-group anyuid system:serviceaccounts:<ns>` before deploying Bookinfo, an SCC for ClickHouse in the Solo UI lab, OpenShift `Route` for exposure, User Workload Monitoring for observability, and the `> **OpenShift ambient probes:**` note. Everything else is copied verbatim from the Kubernetes sibling. Keep `kubectl` as the CLI; use `oc` only for OpenShift-only verbs.
 - **Multicluster variants** add `KUBECONTEXT_CLUSTER2`, `MESH_NAME_CLUSTER2`, a `## Set cluster contexts` section, `for context in ... do` loops, and the `cluster1.local` / `cluster2.local` trust-domain split. The single-cluster install is deliberately multicluster-ready (`PILOT_SKIP_VALIDATE_TRUST_DOMAIN`, `platforms.peering.enabled`, per-cluster trust domain) and its Background table explains why; preserve that so a single-cluster install can grow into the multicluster workshop.
