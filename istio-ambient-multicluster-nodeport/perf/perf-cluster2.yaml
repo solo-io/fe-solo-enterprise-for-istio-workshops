@@ -1,0 +1,45 @@
+# Lab 009: the cross-cluster target in cluster2.
+# echo-remote is a global Service that exists only in cluster2, so every call to
+# echo-remote.perf.mesh.internal from cluster1 crosses the east-west gateway.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: perf
+  labels:
+    istio.io/dataplane-mode: ambient
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo
+  namespace: perf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: echo
+  template:
+    metadata:
+      labels:
+        app: echo
+    spec:
+      containers:
+      - name: fortio
+        image: fortio/fortio:1.75.3
+        args: ["server", "-http-port", "8080"]
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-remote
+  namespace: perf
+  labels:
+    solo.io/service-scope: global
+spec:
+  selector:
+    app: echo
+  ports:
+  - name: http
+    port: 8080

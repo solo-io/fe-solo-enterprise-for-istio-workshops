@@ -64,6 +64,9 @@ brew install vegeta
 #run for 10 minutes, 1 query per second then report
 echo "GET http://yourhostname/path" | vegeta attack -duration=600s -rate=1 | vegeta report --type=text
 ```
+#### ingress2gateway (Ingress to Gateway API converter)
+https://github.com/kubernetes-sigs/ingress2gateway converts `Ingress` objects and some provider resources to Gateway API. Lab `016` downloads the release binary into the workshop directory.
+
 #### Fortio (load generator)
 https://github.com/fortio/fortio Fortio has a lot of features for load testing and reporting, and can be run in a k8s pod. This is for more feature complete stress testing, for more quick and dirty results use Vegeta
 On Mac/Linux:

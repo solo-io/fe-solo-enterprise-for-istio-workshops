@@ -1,0 +1,17 @@
+# Zero-trust baseline: an ALLOW policy with no rules matches nothing, so every
+# connection to a workload in these namespaces is denied until a policy allows it.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-nothing
+  namespace: bookinfo-frontends
+spec:
+  {}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-nothing
+  namespace: bookinfo-backends
+spec:
+  {}

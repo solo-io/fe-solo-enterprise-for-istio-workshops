@@ -1,0 +1,65 @@
+# Lab 016: a team's existing ingress-nginx objects for Bookinfo, as they would sit in Git.
+# 1. Host and path routing with a canary that sends 20 percent to a second Service
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bookinfo
+  namespace: bookinfo-frontends
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: bookinfo.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: productpage
+            port:
+              number: 9080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bookinfo-canary
+  namespace: bookinfo-frontends
+  annotations:
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "20"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: bookinfo.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: productpage-canary
+            port:
+              number: 9080
+---
+# 2. A prefix strip written as a regex rewrite: /store/<rest> is served as /<rest>
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bookinfo-store
+  namespace: bookinfo-frontends
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: bookinfo.example.com
+    http:
+      paths:
+      - path: /store(/|$)(.*)
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: productpage
+            port:
+              number: 9080

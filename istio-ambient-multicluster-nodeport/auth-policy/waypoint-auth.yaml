@@ -1,0 +1,122 @@
+# Lab 008: authorization for bookinfo-backends once the namespace uses a waypoint.
+#
+# The waypoint adds a hop. Callers connect to the waypoint, and the waypoint connects
+# to the pod, so ztunnel at the pod sees the waypoint's identity, not the original
+# caller. The selector policies from lab 007 stop matching and every backend call fails.
+#
+# Enforcement is split across the two hops:
+#   * Pod level (selector): only the waypoint may deliver. This also stops a caller
+#     from skipping the waypoint and connecting to the pod directly.
+#   * Waypoint level (targetRefs): the identity rules. The waypoint terminates the
+#     caller's mTLS connection, so it sees the original caller.
+#
+# Do not add the waypoint identity to the lab 007 policies instead. That makes every
+# pod trust anything the waypoint forwards, so any mesh workload reaches any backend.
+#
+# Each cluster runs its own waypoint, so both trust domains are listed and the same
+# file applies to both clusters.
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: details-auth
+  namespace: bookinfo-backends
+spec:
+  selector:
+    matchLabels:
+      app: details
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster1.local/ns/bookinfo-backends/sa/waypoint
+        - cluster2.local/ns/bookinfo-backends/sa/waypoint
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: reviews-auth
+  namespace: bookinfo-backends
+spec:
+  selector:
+    matchLabels:
+      app: reviews
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster1.local/ns/bookinfo-backends/sa/waypoint
+        - cluster2.local/ns/bookinfo-backends/sa/waypoint
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: ratings-auth
+  namespace: bookinfo-backends
+spec:
+  selector:
+    matchLabels:
+      app: ratings
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster1.local/ns/bookinfo-backends/sa/waypoint
+        - cluster2.local/ns/bookinfo-backends/sa/waypoint
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: details-waypoint-auth
+  namespace: bookinfo-backends
+spec:
+  targetRefs:
+  - kind: Service
+    group: ""
+    name: details
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster1.local/ns/bookinfo-frontends/sa/bookinfo-productpage
+        - cluster2.local/ns/bookinfo-frontends/sa/bookinfo-productpage
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: reviews-waypoint-auth
+  namespace: bookinfo-backends
+spec:
+  targetRefs:
+  - kind: Service
+    group: ""
+    name: reviews
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster1.local/ns/bookinfo-frontends/sa/bookinfo-productpage
+        - cluster2.local/ns/bookinfo-frontends/sa/bookinfo-productpage
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: ratings-waypoint-auth
+  namespace: bookinfo-backends
+spec:
+  targetRefs:
+  - kind: Service
+    group: ""
+    name: ratings
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster1.local/ns/bookinfo-backends/sa/bookinfo-reviews
+        - cluster2.local/ns/bookinfo-backends/sa/bookinfo-reviews

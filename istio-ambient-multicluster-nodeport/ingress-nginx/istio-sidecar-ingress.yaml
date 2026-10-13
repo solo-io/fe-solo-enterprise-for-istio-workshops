@@ -1,0 +1,61 @@
+# Lab 016: ingress configuration from a sidecar-era Istio install: an Istio Gateway
+# (networking.istio.io) and a VirtualService bound to it.
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: bookinfo-gateway
+  namespace: bookinfo-frontends
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - bookinfo.example.com
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: bookinfo
+  namespace: bookinfo-frontends
+spec:
+  hosts:
+  - bookinfo.example.com
+  gateways:
+  - bookinfo-gateway
+  http:
+  - match:
+    - headers:
+        end-user:
+          exact: premium-user
+    route:
+    - destination:
+        host: productpage
+        port:
+          number: 9080
+    headers:
+      request:
+        set:
+          x-tier: premium
+  - match:
+    - uri:
+        prefix: /store/
+    rewrite:
+      uri: /
+    route:
+    - destination:
+        host: productpage
+        port:
+          number: 9080
+  - route:
+    - destination:
+        host: productpage
+        port:
+          number: 9080
+    retries:
+      attempts: 3
+      retryOn: 5xx
+    timeout: 10s

@@ -64,3 +64,12 @@ docs/superpowers/
 # VM MySQL lab (012): bootstrap and workload tokens are credentials
 **/vm-db-tokens/
 **/vm-db-config/
+
+# Playwright MCP page snapshots and screenshot scratch
+.playwright-mcp/
+
+# Upgrade lab (017): exported Helm values include the license key
+**/upgrade-values/
+
+# Ingress migration lab (016): downloaded release binary
+**/ingress2gateway

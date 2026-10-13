@@ -1,0 +1,232 @@
+{
+  "uid": "mesh-namespace",
+  "title": "Mesh namespace overview",
+  "tags": [
+    "istio",
+    "ambient"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "cluster",
+        "label": "Cluster",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(istio_requests_total, cluster)",
+          "refId": "cluster"
+        },
+        "definition": "label_values(istio_requests_total, cluster)",
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "refresh": 2
+      },
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(istio_requests_total{cluster=~\"$cluster\"}, destination_workload_namespace)",
+          "refId": "namespace"
+        },
+        "definition": "label_values(istio_requests_total{cluster=~\"$cluster\"}, destination_workload_namespace)",
+        "includeAll": false,
+        "multi": false,
+        "refresh": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Requests per second",
+      "description": "Requests received by each service, counted once at the destination.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (cluster, destination_service) (rate(istio_requests_total{reporter=\"destination\", cluster=~\"$cluster\", destination_workload_namespace=~\"$namespace\"}[1m]))",
+          "legendFormat": "{{cluster}} {{destination_service}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Error rate (5xx)",
+      "description": "Share of requests that returned a 5xx status. Shows 0 when there are none.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "100 * (sum by (cluster, destination_service) (rate(istio_requests_total{reporter=\"destination\", cluster=~\"$cluster\", destination_workload_namespace=~\"$namespace\", response_code=~\"5..\"}[1m])) or 0 * sum by (cluster, destination_service) (rate(istio_requests_total{reporter=\"destination\", cluster=~\"$cluster\", destination_workload_namespace=~\"$namespace\"}[1m]))) / sum by (cluster, destination_service) (rate(istio_requests_total{reporter=\"destination\", cluster=~\"$cluster\", destination_workload_namespace=~\"$namespace\"}[1m]))",
+          "legendFormat": "{{cluster}} {{destination_service}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Latency p99",
+      "description": "99th percentile request duration at the destination.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le, cluster, destination_service) (rate(istio_request_duration_milliseconds_bucket{reporter=\"destination\", cluster=~\"$cluster\", destination_workload_namespace=~\"$namespace\"}[1m])))",
+          "legendFormat": "{{cluster}} {{destination_service}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Requests by caller",
+      "description": "Who calls the services in this namespace, including callers in other clusters.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (cluster, source_cluster, source_workload_namespace, source_workload) (rate(istio_requests_total{reporter=\"destination\", cluster=~\"$cluster\", destination_workload_namespace=~\"$namespace\"}[1m]))",
+          "legendFormat": "{{source_cluster}}/{{source_workload_namespace}}/{{source_workload}} -> {{cluster}}"
+        }
+      ]
+    }
+  ]
+}

@@ -9,6 +9,18 @@
 - Peer the two clusters through NodePort east-west gateways, with no LoadBalancer
 - Configure a globally available service using labels (productpage)
 - Reconfigure ingress to global service hostname (*.<namespace>.mesh.internal)
+- Enforce zero trust in both clusters with explicit trust domains, and quarantine a pod or an identity
+- Add L7 policy and traffic management with waypoints in both clusters
+- Trace and measure the east-west data path, and bypass a central gateway hostname
+- Collect mesh metrics from both clusters into one Prometheus and Grafana
+- Move a stable hostname between clusters by route weight, under load
+- Detect and repair NodePort peering drift, and pin the east-west NodePorts
+- Serve per-hostname ECDSA P-256 certificates from cert-manager
+- Carry the real client IP through the ingress gateway and across clusters
+- Send egress through dedicated nodes with stable source IPs
+- Convert ingress-nginx and Istio ingress objects to Gateway API
+- Upgrade both clusters from 1.28 to 1.29 under load, and roll back
+- Add two clusters and peer all four in a full NodePort mesh
 
 # Use Cases
 - Zero Trust (mTLS)
@@ -17,6 +29,18 @@
 - Global service discovery
 - High Availability
 - Failover
+- Workload quarantine
+- L7 traffic management (waypoints)
+- East-west data path and gateway bypass
+- Observability and metrics federation
+- Hostname migration between clusters
+- Peering lifecycle operations
+- TLS certificates with cert-manager
+- Client source IP preservation
+- Egress control with stable IPs
+- Ingress migration to Gateway API
+- Upgrades and rollback
+- Scaling the mesh past two clusters
 
 ## NodePort Peering
 
@@ -25,7 +49,9 @@ This workshop follows Solo's multi-cluster NodePort reference architecture ([`so
 ## Validated on
 - Kubernetes ≥ 1.29
 - Istio 1.28.10-patch0-solo
-- vind on Docker Desktop (arm64): two clusters with two nodes each, peered over NodePorts
+- vind on Docker Desktop (arm64): two clusters with two nodes each, peered over NodePorts, for every lab
+- vind on Docker Desktop (arm64): four clusters with two nodes each for lab `018`
+- Istio 1.29.7-patch0-solo as the upgrade target in lab `017`
 
 # High Level Architecture Diagram
 ![](../images/multicluster-global-mesh-2.png)
