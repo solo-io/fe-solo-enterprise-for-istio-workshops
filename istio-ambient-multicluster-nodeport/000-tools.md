@@ -39,7 +39,7 @@ Useful commands:
 ./solo-istioctl waypoint
 ```
 
-> **Note:** lab `006` applies the remote-peer Gateways with `kubectl`. In 1.28, `./solo-istioctl multicluster link`
+> **Note:** lab `007` applies the remote-peer Gateways with `kubectl`. In 1.28, `./solo-istioctl multicluster link`
 > needs a LoadBalancer address on the east-west gateway.
 
 ## Optional Tools
@@ -65,7 +65,7 @@ brew install vegeta
 echo "GET http://yourhostname/path" | vegeta attack -duration=600s -rate=1 | vegeta report --type=text
 ```
 #### ingress2gateway (Ingress to Gateway API converter)
-https://github.com/kubernetes-sigs/ingress2gateway converts `Ingress` objects and some provider resources to Gateway API. Lab `016` downloads the release binary into the workshop directory.
+https://github.com/kubernetes-sigs/ingress2gateway converts `Ingress` objects and some provider resources to Gateway API. Lab `017` downloads the release binary into the workshop directory.
 
 #### Fortio (load generator)
 https://github.com/fortio/fortio Fortio has a lot of features for load testing and reporting, and can be run in a k8s pod. This is for more feature complete stress testing, for more quick and dirty results use Vegeta
@@ -77,7 +77,7 @@ brew install fortio
 Solo Istio service mesh troubleshooting (check here first)
 https://docs.solo.io/istio/1.28.x/troubleshooting/service-mesh/
 
-Multicluster peering (lab `006`)
+Multicluster peering (lab `007`)
 https://docs.solo.io/istio/1.28.x/troubleshooting/service-mesh/multicluster/
 
 OSS Ambient Debugging information

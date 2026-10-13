@@ -1,4 +1,4 @@
-# Lab 007: lets the tenant-a curl-client in cluster1 call productpage.
+# Lab 008: lets the tenant-a curl-client in cluster1 call productpage.
 # ALLOW policies add up: a request is allowed if any ALLOW policy matches it,
 # so this policy grants tenant-a access without editing productpage-auth.
 apiVersion: security.istio.io/v1

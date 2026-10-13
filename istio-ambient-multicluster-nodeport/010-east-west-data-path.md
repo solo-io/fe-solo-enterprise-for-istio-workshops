@@ -7,8 +7,8 @@
 - List the cases where traffic still goes through a gateway or a proxy
 
 ## Prerequisites
-- This lab assumes you have completed setup from labs `000-008`
-- The waypoint from lab `008` is deployed in `bookinfo-backends`
+- This lab assumes you have completed setup from labs `000-009`
+- The waypoint from lab `009` is deployed in `bookinfo-backends`
 
 Ensure the following environment variables are set:
 ```bash
@@ -28,8 +28,8 @@ A call only gets an extra proxy when something adds one. This lab measures the s
 | 1 | No mesh: `fortio-client-nomesh` to `echo-nomesh` | None. kube-proxy translates the Service IP |
 | 2 | Ambient L4: `fortio-client` to `echo` | Source ztunnel, destination ztunnel |
 | 3 | Ambient with a waypoint: `fortio-client` to `echo-l7` | Source ztunnel, waypoint (Envoy), destination ztunnel |
-| 4 | Hairpin through the ingress gateway: `fortio-client` to `ingress-istio`, which routes to `echo` | Source ztunnel, ingress gateway (Envoy), destination ztunnel |
-| 5 | Cross-cluster: `fortio-client` to `echo-remote.perf.mesh.internal` | Source ztunnel, cluster2 east-west gateway (Envoy), destination ztunnel in cluster2 |
+| 4 | Hairpin through the ingress gateway: `fortio-client` to agentgateway, which routes to `echo` | Source ztunnel, agentgateway, destination ztunnel |
+| 5 | Cross-cluster: `fortio-client` to `echo-remote.perf.mesh.internal` | Source ztunnel, cluster2 east-west gateway (ztunnel), destination ztunnel in cluster2 |
 
 Path 4 stands in for today's pattern, where internal callers reach other internal services through a central gateway. Path 2 is what ambient does when callers address the service directly.
 
@@ -70,13 +70,13 @@ NAME                       HOSTS                                LOCATION        
 autogen.perf.echo-remote   ["echo-remote.perf.mesh.internal"]   MESH_INTERNAL   STATIC       9s
 ```
 
-> **The `perf` namespace is open to every mesh caller.** Lab `007` locked down the Bookinfo namespaces only. `perf` has no `ALLOW` policies, and its in-mesh callers use mTLS, so `STRICT` mode accepts them. The baseline client is outside the mesh and calls only the baseline target, which is outside the mesh too.
+> **The `perf` namespace is open to every mesh caller.** Lab `008` locked down the Bookinfo namespaces only. `perf` has no `ALLOW` policies, and its in-mesh callers use mTLS, so `STRICT` mode accepts them. The baseline client is outside the mesh and calls only the baseline target, which is outside the mesh too.
 
 ## Trace Each Path
 
 Send one request over each path, then read what the cluster1 ztunnels logged for `fortio-client`:
 ```bash
-for URL in http://echo:8080/echo http://echo-l7:8080/echo http://ingress-istio.istio-system/echo http://echo-remote.perf.mesh.internal:8080/echo; do
+for URL in http://echo:8080/echo http://echo-l7:8080/echo http://ingress.agentgateway-system/echo http://echo-remote.perf.mesh.internal:8080/echo; do
   kubectl exec deploy/fortio-client -n perf --context $KUBECONTEXT_CLUSTER1 -- fortio curl -quiet $URL > /dev/null 2>&1
 done
 sleep 2
@@ -87,20 +87,20 @@ kubectl logs -n istio-system -l app=ztunnel --context $KUBECONTEXT_CLUSTER1 --si
 
 Expected output (addresses differ on your machine):
 ```
-dst.addr=10.244.2.100:15008	dst.service="echo.perf.svc.cluster.local"	dst.workload="echo-959df6568-mjrzb"
-dst.addr=10.244.2.68:80	dst.service="ingress-istio.istio-system.svc.cluster.local"	dst.workload="ingress-istio-647c569-p8pj8"
-dst.addr=10.244.2.99:15008	dst.service="echo-l7.perf.svc.cluster.local"	dst.workload="waypoint-5dc9fb8d6-crz7g"
-dst.addr=172.30.0.4:31213	dst.service="echo-remote.perf.mesh.internal"	dst.workload="NetworkGateway/cluster2/172.30.0.4/31213"
+dst.addr=10.244.1.42:80	dst.service="ingress.agentgateway-system.svc.cluster.local"	dst.workload="ingress-55cd48866f-8bgcj"
+dst.addr=10.244.1.58:15008	dst.service="echo.perf.svc.cluster.local"	dst.workload="echo-959df6568-vvdv9"
+dst.addr=10.244.1.59:15008	dst.service="echo-l7.perf.svc.cluster.local"	dst.workload="waypoint-5dc9fb8d6-tvc9f"
+dst.addr=172.30.0.4:31115	dst.service="echo-remote.perf.mesh.internal"	dst.workload="NetworkGateway/cluster2/172.30.0.4/31115"
 ```
 
 Each line is the first hop that the source ztunnel opened:
 
 - `echo` goes straight to the `echo` pod IP on `15008`. This is path 2: one HBONE connection from node to node, and nothing in between.
 - `echo-l7` goes to the waypoint pod on `15008`. The waypoint then opens a second HBONE connection to the `echo` pod.
-- `ingress-istio` goes to the ingress gateway pod on port `80`, not `15008`. The gateway runs in `istio-system`, which lab `002` excludes from ambient capture, so this hop is plaintext. The gateway then opens HBONE to `echo`. Hairpinning through a gateway adds an Envoy hop, and also an unencrypted hop.
-- `echo-remote` goes to `NetworkGateway/cluster2/172.30.0.4/31213`: a cluster2 node IP and the HBONE NodePort from the `istio-remote-peer-cluster2` Gateway in lab `006`.
+- `ingress.agentgateway-system` goes to the agentgateway pod on port `80`, not `15008`. agentgateway runs outside ztunnel's capture (lab `005`), so this hop is plaintext. agentgateway then opens HBONE to `echo`. Hairpinning through a gateway adds a proxy hop, and also an unencrypted hop.
+- `echo-remote` goes to `NetworkGateway/cluster2/172.30.0.4/31115`: a cluster2 node IP and the HBONE NodePort from the `istio-remote-peer-cluster2` Gateway in lab `007`.
 
-The waypoint's own hop to the `echo` pod does not show up in this log right away. The waypoint keeps a pool of long-lived HBONE connections to its backends, and ztunnel writes a `connection complete` line only when a connection closes. Lab `008` showed that hop from the policy side: the backend pods saw the waypoint's identity, not the caller's.
+The waypoint's own hop to the `echo` pod does not show up in this log right away. The waypoint keeps a pool of long-lived HBONE connections to its backends, and ztunnel writes a `connection complete` line only when a connection closes. Lab `009` showed that hop from the policy side: the backend pods saw the waypoint's identity, not the caller's.
 
 See the far side of the cross-cluster path in cluster2:
 ```bash
@@ -117,9 +117,9 @@ NAME                             READY   STATUS    RESTARTS   AGE     IP        
 istio-eastwest-7bbf6d47d-6mjhh   1/1     Running   0          5h51m   10.244.2.56   worker-1   <none>           <none>
 ```
 
-`src.addr` is the east-west gateway pod, and `src.identity` is still the original cluster1 client. The east-west gateway forwards the inner HBONE stream without terminating its mTLS, so the destination checks policy against the real caller, as lab `007` showed.
+`src.addr` is the east-west gateway pod, and `src.identity` is still the original cluster1 client. The east-west gateway forwards the inner HBONE stream without terminating its mTLS, so the destination checks policy against the real caller, as lab `008` showed.
 
-> **NodePort adds a kube-proxy hop when the peer address is not the gateway's node.** The remote-peer Gateway points at `172.30.0.4`, the cluster2 control-plane node that lab `006` selects with `PEER_NODE_SELECTOR`, and the east-west pod runs on `worker-1`. kube-proxy on the control-plane node forwards the connection to `worker-1`. That is the trade-off of the control-plane default: stable addresses for one extra node hop. If you unset `PEER_NODE_SELECTOR` in lab `006`, the peer address is the node that runs the east-west pod, `dst.addr` above shows that node's IP, and the extra hop goes away. Lab `012` covers how to keep the peer addresses current.
+> **NodePort adds a kube-proxy hop when the peer address is not the gateway's node.** The remote-peer Gateway points at `172.30.0.4`, the cluster2 control-plane node that lab `007` selects with `PEER_NODE_SELECTOR`, and the east-west pod runs on `worker-1`. kube-proxy on the control-plane node forwards the connection to `worker-1`. That is the trade-off of the control-plane default: stable addresses for one extra node hop. If you unset `PEER_NODE_SELECTOR` in lab `007`, the peer address is the node that runs the east-west pod, `dst.addr` above shows that node's IP, and the extra hop goes away. Lab `013` covers how to keep the peer addresses current.
 
 ## Measure Each Path
 
@@ -138,20 +138,20 @@ measure() {
 measure fortio-client-nomesh http://echo-nomesh:8080/echo                 "1 no mesh"
 measure fortio-client        http://echo:8080/echo                        "2 ambient L4"
 measure fortio-client        http://echo-l7:8080/echo                     "3 waypoint"
-measure fortio-client        http://ingress-istio.istio-system/echo       "4 ingress hairpin"
+measure fortio-client        http://ingress.agentgateway-system/echo      "4 ingress hairpin"
 measure fortio-client        http://echo-remote.perf.mesh.internal:8080/echo "5 cross-cluster"
 ```
 
 Expected output (the run takes about 75 seconds; numbers differ on your machine):
 ```
-1 no mesh              p50  0.56 ms   p90  0.94 ms   p99  1.85 ms   200s 3000
-2 ambient L4           p50  0.71 ms   p90  1.62 ms   p99  2.81 ms   200s 3000
-3 waypoint             p50  1.58 ms   p90  2.29 ms   p99  3.76 ms   200s 3000
-4 ingress hairpin      p50  1.49 ms   p90  1.91 ms   p99  2.53 ms   200s 3000
-5 cross-cluster        p50  1.39 ms   p90  1.89 ms   p99  2.77 ms   200s 3000
+1 no mesh              p50  0.53 ms   p90  0.91 ms   p99  1.00 ms   200s 3000
+2 ambient L4           p50  0.65 ms   p90  0.95 ms   p99  2.27 ms   200s 3000
+3 waypoint             p50  1.50 ms   p90  1.92 ms   p99  3.71 ms   200s 3000
+4 ingress hairpin      p50  1.39 ms   p90  1.89 ms   p99  2.94 ms   200s 3000
+5 cross-cluster        p50  1.06 ms   p90  1.85 ms   p99  3.75 ms   200s 3000
 ```
 
-Ambient L4 adds a fraction of a millisecond over no mesh: it adds mTLS and identity, and keeps the same network path. The waypoint, the ingress hairpin and the east-west gateway each add a similar amount on top of the L4 path, because each one is a single Envoy hop. Moving an internal call from path 4 to path 2 removes that hop and halves the median in this run. All 15,000 requests returned `200`.
+Ambient L4 adds a fraction of a millisecond over no mesh: it adds mTLS and identity, and keeps the same network path. The waypoint, the ingress hairpin and the east-west gateway each add a similar amount on top of the L4 path, because each one is a single proxy hop. Moving an internal call from path 4 to path 2 removes that hop and halves the median in this run. All 15,000 requests returned `200`.
 
 > **These numbers come from a laptop.** The validation run used vind on Docker Desktop, where every node is a container on one machine, so network latency between nodes is close to zero. Use the relative difference between paths to design your own test. On real hardware, run the same five paths at your production request rates, payload sizes and connection counts, and measure your current gateway path as the baseline.
 
@@ -202,12 +202,12 @@ measure fortio-client http://api-gateway.corp.example/echo "gateway hostname"
 
 Expected output:
 ```
-gateway hostname       p50  0.75 ms   p90  1.54 ms   p99  2.14 ms   200s 3000
+gateway hostname       p50  0.65 ms   p90  0.94 ms   p99  1.23 ms   200s 3000
 ```
 
 The latency matches path 2.
 
-> **The bypass also drops what the gateway did.** If the central gateway authenticates callers, rate-limits, or routes by path to different backends, the mesh must take over those jobs before you redirect the hostname. Use `AuthorizationPolicy` for caller identity (lab `007`), and a waypoint with `HTTPRoute` rules on the `ServiceEntry` for path routing (lab `008`). Redirect one hostname at a time, for one set of callers at a time. A `ServiceEntry` applies to the namespaces it is exported to, so you can scope the change with `exportTo`.
+> **The bypass also drops what the gateway did.** If the central gateway authenticates callers, rate-limits, or routes by path to different backends, the mesh must take over those jobs before you redirect the hostname. Use `AuthorizationPolicy` for caller identity (lab `008`), and a waypoint with `HTTPRoute` rules on the `ServiceEntry` for path routing (lab `009`). Redirect one hostname at a time, for one set of callers at a time. A `ServiceEntry` applies to the namespaces it is exported to, so you can scope the change with `exportTo`.
 
 ## Where the Bypass Does Not Apply
 
@@ -215,11 +215,11 @@ Ambient keeps east-west traffic direct between enrolled workloads. Traffic still
 
 | Case | What is in the path | Why |
 |---|---|---|
-| A service uses a waypoint | One Envoy hop | You asked for L7 features on that service (lab `008`) |
+| A service uses a waypoint | One Envoy hop | You asked for L7 features on that service (lab `009`) |
 | The destination is in another network | The peer cluster's east-west gateway, plus a kube-proxy hop if the peer address is not that gateway's node | Pod IPs are not routable between networks. Every cross-cluster call in this workshop crosses a network |
 | The caller addresses a gateway (hostname or IP) | That gateway | The mesh does not rewrite a destination the caller chose. Redirect the hostname with a `ServiceEntry`, as above |
-| The traffic enters or leaves the mesh | The ingress or egress gateway | North-south traffic is a gateway's job (labs `005` and `015`) |
-| One side is outside the mesh | No ztunnel on that side, and no mTLS | `STRICT` (lab `007`) rejects plaintext into enrolled pods |
+| The traffic enters or leaves the mesh | The ingress or egress gateway | North-south traffic is a gateway's job (labs `006` and `016`) |
+| One side is outside the mesh | No ztunnel on that side, and no mTLS | `STRICT` (lab `008`) rejects plaintext into enrolled pods |
 | A caller hairpins through a gateway in an excluded namespace | A plaintext hop to the gateway | The gateway pod is not enrolled. Send internal callers to the service instead |
 
 Cross-namespace calls and calls across mTLS policy boundaries do not add a hop. Namespaces and `AuthorizationPolicy` change what is allowed, not the path.
@@ -242,4 +242,4 @@ At this point we have completed the following objectives:
 - Sent a central-gateway hostname straight to in-mesh pods with a `ServiceEntry`, with no application change
 - Listed the cases where traffic still goes through a gateway or a proxy
 
-In the next step `010` we will collect mesh metrics from both clusters into one Prometheus and Grafana
+In the next step `011` we will collect mesh metrics from both clusters into one Prometheus and Grafana

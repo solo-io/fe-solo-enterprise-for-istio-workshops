@@ -10,13 +10,13 @@
 ![](../images/observability-federation-1.png)
 
 ## Prerequisites
-- This lab assumes you have completed setup from labs `000-009`
+- This lab assumes you have completed setup from labs `000-010`
 
 Ensure the following environment variables are set:
 ```bash
 export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context name
 export KUBECONTEXT_CLUSTER2=cluster2  # Replace with your actual kubectl context name
-[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 005 in this shell, or its port-forward fallback."
+[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
 ```
 
 ## Background
@@ -27,7 +27,8 @@ A sidecar mesh has one proxy per pod, and every proxy exposes its own metrics, s
 |---|---|---|---|
 | ztunnel | One per node | `15020` `/metrics` | L4 connections and bytes for every enrolled pod on the node. L7 request counts, codes and latency too, because lab `002` sets `L7_ENABLED: "true"` |
 | Waypoints | One per waypoint | `15020` `/stats/prometheus` | L7 metrics for the services that use the waypoint |
-| Ingress and east-west gateways | One per gateway | `15020` `/stats/prometheus` | Traffic entering the cluster |
+| agentgateway ingress | One per gateway pod | `15020` `/metrics` | Requests entering the cluster, by route, backend and status |
+| East-west gateway | One per cluster | `15020`, path from its `prometheus.io/path` annotation | Cross-cluster connections |
 | istiod | One per revision | `15014` `/metrics` | Control plane: config pushes and convergence time |
 
 The number of scrape targets grows with nodes and gateways, not with pods. Each of these components has a `prometheus.io/scrape` annotation, so one scrape job with a namespace filter finds all of them.
@@ -40,7 +41,7 @@ This lab builds a two-tier pipeline:
 | cluster1 | `grafana` | Dashboards. Queries only the central Prometheus |
 | cluster2 | `prometheus` (agent mode) | Scrapes cluster2 and forwards every sample. Keeps a short write-ahead log only |
 
-The manifests are in `observability/`. In each scrape job, `metric_relabel_configs` keeps only the `istio_*` request and TCP series, a few `pilot_*` control plane series, the waypoint retry counter, and process memory and CPU. Prometheus drops everything else the components expose before it stores or forwards a sample. Each job also sets a `cluster` label on every series, so queries and dashboards can tell clusters apart after the data lands in one place.
+The manifests are in `observability/`. In each scrape job, `metric_relabel_configs` keeps only the `istio_*` request and TCP series, the agentgateway request counter and latency histogram, a few `pilot_*` control plane series, the waypoint retry counter, and process memory and CPU. Prometheus drops everything else the components expose before it stores or forwards a sample. Each job also sets a `cluster` label on every series, so queries and dashboards can tell clusters apart after the data lands in one place.
 
 > **Why send metrics over the mesh?** The agent in cluster2 writes to `prometheus.monitoring.mesh.internal`, the global hostname of the central Prometheus. The writes cross the same east-west NodePort as the rest of the mesh traffic, encrypted with mTLS, and an `AuthorizationPolicy` decides which clusters may write. No extra firewall rule, load balancer or VPC route is needed for metrics. The trade-off: if peering breaks, cluster2 metrics stop arriving while the outage lasts. The agent buffers samples in its write-ahead log (two hours by default) and catches up when the path returns. If your metrics must survive a mesh outage, point `remote_write` at a separate address instead.
 
@@ -143,7 +144,7 @@ Expected output:
 "cluster":"cluster2" => 8
 ```
 
-Each cluster has two ztunnels, istiod, one istio-cni pod per node, the east-west gateway, the `bookinfo-backends` waypoint and the Prometheus self-scrape. cluster1 also has the ingress gateway. The istio-cni pods carry the same annotation. Their series do not pass the keep-list, so they cost almost nothing.
+Each cluster has two ztunnels, istiod, one istio-cni pod per node, the east-west gateway, the `bookinfo-backends` waypoint and the Prometheus self-scrape. cluster1 also has the agentgateway ingress pod. The keep-list scrapes only agentgateway's gateway pods, not its controller or add-on services. The istio-cni pods carry the same annotation. Their series do not pass the keep-list, so they cost almost nothing.
 
 Show request rates by reporting cluster:
 ```bash
@@ -152,17 +153,29 @@ promql 'sum by (cluster, reporter) (rate(istio_requests_total[2m]))'
 
 Expected output (rates differ on your machine):
 ```
-"cluster":"cluster1","reporter":"source" => 11.228547029710828
-"cluster":"cluster1","reporter":"destination" => 11.38095238095238
-"cluster":"cluster2","reporter":"destination" => 0
-"cluster":"cluster2","reporter":"source" => 0.6857077551642365
-"cluster":"cluster1","reporter":"waypoint" => 7.837945943886783
+"cluster":"cluster1","reporter":"waypoint" => 0.7523737869163151
+"cluster":"cluster1","reporter":"source" => 1.219047619047619
+"cluster":"cluster1","reporter":"destination" => 1.2571428571428571
 "cluster":"cluster2","reporter":"waypoint" => 0
+"cluster":"cluster2","reporter":"source" => 0.6660694444444444
 ```
 
 If a reporter is missing from the output, wait 30 seconds and run the query again. `rate()` needs two samples inside the 2-minute window, and a series that appeared in the latest scrape has only one.
 
 The same request can be counted by more than one reporter: the source ztunnel, the waypoint and the destination ztunnel. Pick one per query. The dashboard below uses `reporter="destination"`, which counts each request once, where it was served.
+
+agentgateway reports its own request metrics, with the gateway's view of each request: the route that matched, the backend it picked, the status code, and a `reason` that tells an upstream response from a gateway-side failure such as `NoHealthyBackend`. Send 30 seconds of traffic, so Prometheus scrapes the gateway at least twice while it serves, then show the ingress request rate by route and status. `> 0` hides routes with no traffic in the last two minutes:
+```bash
+for i in $(seq 1 60); do curl -s -o /dev/null http://$INGRESS_ADDR/productpage; sleep 0.5; done
+promql 'sum by (route, backend, status, reason) (rate(agentgateway_requests_total[2m])) > 0'
+```
+
+Expected output (rates differ on your machine):
+```
+"backend":"productpage.bookinfo-frontends.mesh.internal:9080","reason":"Upstream","route":"bookinfo-frontends/bookinfo-route","status":"200" => 1.2666787302736218
+```
+
+`agentgateway_requests_total` has no `source_workload` or `destination_workload` labels. Use it for the ingress view, by route and status, and the `istio_*` metrics for workload-to-workload traffic inside the mesh.
 
 ## Measure the Scrape Footprint
 
@@ -176,17 +189,17 @@ echo "memory (MiB):"; promql 'process_resident_memory_bytes{job="prometheus"} / 
 Expected output (numbers differ on your machine):
 ```
 scraped:
-"cluster":"cluster1" => 4886
-"cluster":"cluster2" => 2270
+"cluster":"cluster1" => 2674
+"cluster":"cluster2" => 1881
 kept:
-"cluster":"cluster1" => 2107
-"cluster":"cluster2" => 953
+"cluster":"cluster1" => 858
+"cluster":"cluster2" => 577
 memory (MiB):
-"cluster":"cluster2","instance":"localhost:9090","job":"prometheus","namespace":"monitoring" => 130.828125
-"cluster":"cluster1","instance":"localhost:9090","job":"prometheus","namespace":"monitoring" => 137.90625
+"cluster":"cluster1","instance":"localhost:9090","job":"prometheus","namespace":"monitoring" => 105.8203125
+"cluster":"cluster2","instance":"localhost:9090","job":"prometheus","namespace":"monitoring" => 102.49609375
 ```
 
-Both clusters keep about 43 percent of the samples they scrape, and the rest stays out of storage and off the network. cluster1 keeps more samples because it serves more traffic. Most kept samples are latency histogram buckets (`istio_request_duration_milliseconds_bucket`), and their count grows with the number of distinct caller and service pairs, so watch that series as the mesh grows and aggregate it with recording rules if you need fewer series.
+Both clusters keep about a third of the samples they scrape, and the rest stays out of storage and off the network. cluster1 keeps more samples because it serves more traffic. Most kept samples are latency histogram buckets (`istio_request_duration_milliseconds_bucket`), and their count grows with the number of distinct caller and service pairs, so watch that series as the mesh grows and aggregate it with recording rules if you need fewer series.
 
 The agent and the server use similar memory in a small lab. The agent only scrapes and forwards: storage, retention and queries all happen in cluster1, so the central tier is the only one you size for them.
 
@@ -227,7 +240,7 @@ echo "http://localhost:3000/d/mesh-namespace/mesh-namespace-overview?var-namespa
 
 ![](../images/observability-federation-1.png)
 
-The dashboard has two variables: **Cluster** and **Namespace**. With **Cluster** set to `All`, the panels show productpage served by cluster1, then by cluster2 during the failover, then by cluster1 again. **Requests by caller** shows who calls the namespace, including callers in other clusters. Every panel filters on `destination_workload_namespace`, so a team sees only the services in its namespace.
+The dashboard has two variables: **Cluster** and **Namespace**. With **Cluster** set to `All`, the panels show productpage served by cluster1, then by cluster2 during the failover, then by cluster1 again. **Requests by caller** shows who calls the namespace, including callers in other clusters. **Ingress requests by route and status** shows the agentgateway routes that live in the namespace. The mesh panels filter on `destination_workload_namespace` and the ingress panel on the route's namespace, so a team sees only its own services and routes.
 
 > **Tenant-facing dashboards.** To give a team its own view, copy the dashboard into a Grafana folder that only the team can read, and set the `namespace` variable to a constant with the team's namespace. The queries stay the same. For a hard boundary between tenants, also put a query proxy that enforces a label (for example `prom-label-proxy`) between Grafana and Prometheus, so a hand-written query cannot read another namespace.
 
@@ -247,7 +260,7 @@ The two-tier shape stays the same with hundreds of clusters:
 
 ## Cleanup
 
-No cleanup is needed. The monitoring stack stays in place for lab `017`, where it shows error rates during the upgrade, and lab `019` removes it.
+No cleanup is needed. The monitoring stack stays in place for lab `018`, where it shows error rates during the upgrade, and lab `020` removes it.
 
 > **Removing it now?**
 > ```bash
@@ -265,4 +278,4 @@ At this point we have completed the following objectives:
 - Measured the scrape footprint of each cluster
 - Gave each team a namespace dashboard in Grafana that covers both clusters
 
-In the next step `011` we will move a stable hostname between clusters with a weighted canary
+In the next step `012` we will move a stable hostname between clusters with a weighted canary

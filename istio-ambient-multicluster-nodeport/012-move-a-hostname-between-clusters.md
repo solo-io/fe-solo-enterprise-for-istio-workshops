@@ -7,14 +7,14 @@
 - See why a cluster-specific backend has no failover, and finish the move on the global hostname
 
 ## Prerequisites
-- This lab assumes you have completed setup from labs `000-010`
+- This lab assumes you have completed setup from labs `000-011`
 - (Optional) Vegeta for load generation: see [000-tools.md](000-tools.md#vegeta-cli-load-generator)
 
 Ensure the following environment variables are set:
 ```bash
 export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context name
 export KUBECONTEXT_CLUSTER2=cluster2  # Replace with your actual kubectl context name
-[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 005 in this shell, or its port-forward fallback."
+[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
 ```
 
 ## Background
@@ -27,7 +27,7 @@ This lab uses three kinds of hostnames:
 |---|---|---|
 | `bookinfo.example.com` | Customers. Never changes | The ingress gateway. The `HTTPRoute` on it picks the backend |
 | `productpage-cluster1.bookinfo-frontends.mesh.internal` and `productpage-cluster2...` | The platform team's route only | productpage pods in one cluster |
-| `productpage.bookinfo-frontends.mesh.internal` | Everyone else, and the route once the move is done | productpage pods in every cluster, local first (lab `006`) |
+| `productpage.bookinfo-frontends.mesh.internal` | Everyone else, and the route once the move is done | productpage pods in every cluster, local first (lab `007`) |
 
 The cluster-specific hostnames come from one `Service` per cluster with the `solo.io/service-scope=global` label. Each one exists in a single cluster, so its global hostname has endpoints in that cluster only. The weights in the `HTTPRoute` then decide how much traffic each cluster gets. The customer's hostname, DNS record and certificate stay the same throughout.
 
@@ -35,7 +35,7 @@ The cluster-specific hostnames come from one `Service` per cluster with the `sol
 
 ## Create a Hostname per Cluster
 
-Create a `productpage-cluster1` Service in cluster1 and a `productpage-cluster2` Service in cluster2. Both select the same productpage pods as the `productpage` Service, so the lab `007` policies apply to them unchanged:
+Create a `productpage-cluster1` Service in cluster1 and a `productpage-cluster2` Service in cluster2. Both select the same productpage pods as the `productpage` Service, so the lab `008` policies apply to them unchanged:
 ```bash
 for N in 1 2; do
   CONTEXT=$(eval echo \$KUBECONTEXT_CLUSTER$N)
@@ -69,7 +69,7 @@ autogen.bookinfo-frontends.productpage-cluster2   ["productpage-cluster2.bookinf
 
 ## Serve the Customer Hostname from cluster1
 
-Add an `HTTPRoute` for `bookinfo.example.com` that sends all traffic to cluster1. The existing `bookinfo-route` from lab `006` keeps serving requests for any other hostname:
+Add an `HTTPRoute` for `bookinfo.example.com` that sends all traffic to cluster1. The existing `bookinfo-route` from lab `007` keeps serving requests for any other hostname:
 ```bash
 kubectl apply --context $KUBECONTEXT_CLUSTER1 -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
@@ -80,7 +80,7 @@ metadata:
 spec:
   parentRefs:
   - name: ingress
-    namespace: istio-system
+    namespace: agentgateway-system
   hostnames:
   - bookinfo.example.com
   rules:
@@ -187,7 +187,7 @@ no healthy upstream (503)
 
 cluster1 still runs a healthy productpage, but the route does not use it. A weight of `0` removes a backend completely, and Gateway API does not fail over between `backendRefs`. The cluster-specific hostnames are for the move only.
 
-Finish the move on the global hostname, which has every cluster's endpoints and the `PreferNetwork` failover from lab `006`:
+Finish the move on the global hostname, which has every cluster's endpoints and the `PreferNetwork` failover from lab `007`:
 ```bash
 kubectl apply --context $KUBECONTEXT_CLUSTER1 -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
@@ -198,7 +198,7 @@ metadata:
 spec:
   parentRefs:
   - name: ingress
-    namespace: istio-system
+    namespace: agentgateway-system
   hostnames:
   - bookinfo.example.com
   rules:
@@ -242,4 +242,4 @@ At this point we have completed the following objectives:
 - Shifted the hostname from cluster1 to cluster2 by route weight, under load, with no failed requests
 - Saw why a cluster-specific backend has no failover, and finished the move on the global hostname
 
-In the next step `012` we will keep NodePort peering healthy as nodes, NodePorts and clusters change
+In the next step `013` we will keep NodePort peering healthy as nodes, NodePorts and clusters change

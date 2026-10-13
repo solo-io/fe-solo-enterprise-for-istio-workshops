@@ -1,4 +1,4 @@
-# Lab 009: the cross-cluster target in cluster2.
+# Lab 010: the cross-cluster target in cluster2.
 # echo-remote is a global Service that exists only in cluster2, so every call to
 # echo-remote.perf.mesh.internal from cluster1 crosses the east-west gateway.
 apiVersion: v1

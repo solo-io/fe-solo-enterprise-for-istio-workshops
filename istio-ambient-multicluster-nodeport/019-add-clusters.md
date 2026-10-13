@@ -5,16 +5,16 @@
 - Create the east-west gateways on the new clusters with pinned NodePorts, before they peer
 - Check NodePort reachability in every direction between the four clusters
 - Peer the four clusters in a full mesh with one loop
-- Copy the lab `007` and `008` policy baseline to the new clusters, and extend every policy to the new trust domains
+- Copy the lab `008` and `009` policy baseline to the new clusters, and extend every policy to the new trust domains
 - Fail productpage over across four clusters
 - Run the drift check for every pair of clusters
 
 ## Prerequisites
-- This lab assumes you have completed setup from labs `000-017`. Labs `007` and `008` set the policy baseline and the waypoints that this lab copies to the new clusters. If you skipped them, also skip the two policy sections below
+- This lab assumes you have completed setup from labs `000-018`. Labs `008` and `009` set the policy baseline and the waypoints that this lab copies to the new clusters. If you skipped them, also skip the two policy sections below
 - Two more Kubernetes clusters (≥ 1.29), each with its own kubectl context
 - The nodes of all four clusters reach each other's node InternalIPs on the NodePort range
 - `shared-root-trust-secret.yaml` and `solo-istioctl` from lab `002`, still in this directory
-- `INGRESS_ADDR` from lab `005` is set in your shell
+- `INGRESS_ADDR` from lab `006` is set in your shell
 
 ## Set cluster contexts
 Set the contexts and mesh names for all four clusters
@@ -28,19 +28,19 @@ export KUBECONTEXT_CLUSTER3=cluster3  # Replace with your actual kubectl context
 export MESH_NAME_CLUSTER3=cluster3    # Recommended to keep as cluster3 for POC
 export KUBECONTEXT_CLUSTER4=cluster4  # Replace with your actual kubectl context name
 export MESH_NAME_CLUSTER4=cluster4    # Recommended to keep as cluster4 for POC
-[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 005 in this shell, or its port-forward fallback."
+[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
 ```
 
 > **KinD users:** KinD automatically prefixes kubecontext names with `kind-`. You can set `KUBECONTEXT_CLUSTER3=kind-<cluster-name>` but keep `MESH_NAME_CLUSTER3=<cluster-name>` (without the `kind-` prefix). The mesh name is the Istio network name and trust domain prefix, and the policies in this lab match on it.
 
-Export your Solo Trial License Key and the Istio version. Lab `017` rolled the mesh back to 1.28, so the new clusters join at the same version
+Export your Solo Trial License Key and the Istio version. Lab `018` rolled the mesh back to 1.28, so the new clusters join at the same version
 ```bash
 export SOLO_TRIAL_LICENSE_KEY=<paste-your-key>
 [ -n "$SOLO_TRIAL_LICENSE_KEY" ] || echo "⚠️  SOLO_TRIAL_LICENSE_KEY is not set. Istio installs with an empty license and enterprise features, including multicluster peering, then fail."
 export ISTIO_VERSION=1.28.10-patch0
 ```
 
-Lab `006` points the peers at the control-plane nodes with `PEER_NODE_SELECTOR`. Set it again in this shell. If you unset it in lab `006`, skip the `export` line:
+Lab `007` points the peers at the control-plane nodes with `PEER_NODE_SELECTOR`. Set it again in this shell. If you unset it in lab `007`, skip the `export` line:
 ```bash
 export PEER_NODE_SELECTOR=node-role.kubernetes.io/control-plane
 echo "PEER_NODE_SELECTOR=${PEER_NODE_SELECTOR:-<unset: peers use the nodes that run an istio-eastwest pod>}"
@@ -74,9 +74,9 @@ Each cluster holds one `istio-remote-peer-<peer>` Gateway for every other cluste
 | 4 | 12 | 3 | 12 |
 | N | N × (N - 1) | N - 1 | N × (N - 1) |
 
-Each remote-peer Gateway is a copy of the peer's node IPs and NodePorts (lab `012`). In a four-cluster mesh, a replaced node or a recreated east-west Service in one cluster makes three Gateways stale, one in each of the other clusters. This lab adds the clusters in an order that keeps that cost low: it pins the NodePorts before the first peering, and it checks every direction through the firewall before it creates a Gateway.
+Each remote-peer Gateway is a copy of the peer's node IPs and NodePorts (lab `013`). In a four-cluster mesh, a replaced node or a recreated east-west Service in one cluster makes three Gateways stale, one in each of the other clusters. This lab adds the clusters in an order that keeps that cost low: it pins the NodePorts before the first peering, and it checks every direction through the firewall before it creates a Gateway.
 
-Traffic still enters through the cluster1 ingress gateway. The new clusters run no ingress gateway: they serve the global `productpage` service and its backends.
+Traffic still enters through agentgateway in cluster1. The new clusters run no ingress gateway: they serve the global `productpage` service and its backends.
 
 ## Merge the kubeconfigs
 
@@ -246,7 +246,7 @@ bookinfo-frontends productpage-v1-59c74584cf-zlc2k         10.244.2.5  worker-1 
 
 ## Create the East-West Gateways with Pinned NodePorts
 
-Lab `012` pinned the NodePorts of cluster1 and cluster2 after they peered. The new clusters pin before their first peering, so no peer ever holds a port that changes later. Each cluster has its own NodePort range, so every cluster can use the same numbers. Reuse the cluster1 values, and the firewall rules you opened for cluster1 cover the new clusters too:
+Lab `013` pinned the NodePorts of cluster1 and cluster2 after they peered. The new clusters pin before their first peering, so no peer ever holds a port that changes later. Each cluster has its own NodePort range, so every cluster can use the same numbers. Reuse the cluster1 values, and the firewall rules you opened for cluster1 cover the new clusters too:
 ```bash
 EW_STATUS_PORT=$(kubectl get svc istio-eastwest -n istio-gateways --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.spec.ports[?(@.port==15021)].nodePort}')
 EW_HBONE_PORT=$(kubectl get svc istio-eastwest -n istio-gateways --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.spec.ports[?(@.port==15008)].nodePort}')
@@ -259,7 +259,7 @@ Expected output (ports differ on your machine):
 status 31767, HBONE 30454, xDS 32110
 ```
 
-Create the `istio-eastwest-options` ConfigMap from lab `012` first. Then generate the east-west Gateway with `expose`, add the NodePort annotation as in lab `006`, and add the `parametersRef` to the ConfigMap before you apply it. Istio creates the Service with the pinned ports from the start:
+Create the `istio-eastwest-options` ConfigMap from lab `013` first. Then generate the east-west Gateway with `expose`, add the NodePort annotation as in lab `007`, and add the `parametersRef` to the ConfigMap before you apply it. Istio creates the Service with the pinned ports from the start:
 ```bash
 for entry in "${NEW_CLUSTERS[@]}"; do
   CTX=${entry%%=*}
@@ -386,7 +386,7 @@ The full output has 24 lines: two ports for each of the twelve directions. Fix e
 
 ## Peer the Four Clusters
 
-The `apply_remote_peer` function from lab `006` is repeated here so this lab works in a new shell:
+The `apply_remote_peer` function from lab `007` is repeated here so this lab works in a new shell:
 ```bash
 apply_remote_peer() {
   local LOCAL_CTX=$1 PEER_CTX=$2 PEER_MESH=$3 HBONE_PORT XDS_PORT PEER_IPS PEER_ADDRESSES
@@ -505,7 +505,7 @@ Each of the four blocks lists the other three clusters.
 
 ## Apply the Policy Baseline on the New Clusters
 
-cluster1 and cluster2 run the lab `007` baseline and the lab `008` waypoints. A new cluster starts with none of it, so any workload that shares the root CA can reach its Bookinfo pods. Apply the same baseline before the new clusters serve the global service:
+cluster1 and cluster2 run the lab `008` baseline and the lab `009` waypoints. A new cluster starts with none of it, so any workload that shares the root CA can reach its Bookinfo pods. Apply the same baseline before the new clusters serve the global service:
 ```bash
 for entry in "${NEW_CLUSTERS[@]}"; do
   CTX=${entry%%=*}
@@ -546,7 +546,7 @@ These are the files cluster1 and cluster2 use, and their `principals` lists name
 
 ## Add the New Clusters to the Global Service
 
-Label and annotate productpage in the new clusters, as lab `006` did in cluster1 and cluster2:
+Label and annotate productpage in the new clusters, as lab `007` did in cluster1 and cluster2:
 ```bash
 for entry in "${NEW_CLUSTERS[@]}"; do
   kubectl --context "${entry%%=*}" -n bookinfo-frontends label service productpage solo.io/service-scope=global --overwrite
@@ -607,7 +607,7 @@ Expected output:
 403 RBAC: access denied
 ```
 
-The cluster3 waypoint denied the call. `details-waypoint-auth` lists the productpage identity in `cluster1.local` and `cluster2.local` only, and productpage in cluster3 runs as `cluster3.local/ns/bookinfo-frontends/sa/bookinfo-productpage`. Lab `007` lists the trust domains on purpose, so an identity from another trust domain that shares the root CA is denied. The cost is that every new cluster's trust domain has to be added to every policy, in every cluster.
+The cluster3 waypoint denied the call. `details-waypoint-auth` lists the productpage identity in `cluster1.local` and `cluster2.local` only, and productpage in cluster3 runs as `cluster3.local/ns/bookinfo-frontends/sa/bookinfo-productpage`. Lab `008` lists the trust domains on purpose, so an identity from another trust domain that shares the root CA is denied. In exchange, you add every new cluster's trust domain to every policy, in every cluster.
 
 ## Extend the Policies to the New Trust Domains
 
@@ -634,10 +634,10 @@ Expected output:
 ```
     - source:
         principals:
-        - cluster1.local/ns/istio-system/sa/ingress-istio
-        - cluster2.local/ns/istio-system/sa/ingress-istio
-        - cluster3.local/ns/istio-system/sa/ingress-istio
-        - cluster4.local/ns/istio-system/sa/ingress-istio
+        - cluster1.local/ns/agentgateway-system/sa/ingress
+        - cluster2.local/ns/agentgateway-system/sa/ingress
+        - cluster3.local/ns/agentgateway-system/sa/ingress
+        - cluster4.local/ns/agentgateway-system/sa/ingress
 ```
 
 Apply the extended policies in all four clusters, so every cluster accepts the same identities. Bookinfo backends are local to each cluster today. Once a backend service is global, a call from productpage in cluster3 can land in cluster1 with a `cluster3.local` identity:
@@ -702,7 +702,7 @@ Expected output:
 
 ## Check Drift Across Every Pair
 
-The `check_peer_drift` function from lab `012` is repeated here. Run it for all twelve remote-peer Gateways:
+The `check_peer_drift` function from lab `013` is repeated here. Run it for all twelve remote-peer Gateways:
 ```bash
 check_peer_drift() {
   local LOCAL_CTX=$1 PEER_CTX=$2 PEER_MESH=$3 GW WANT_HBONE WANT_XDS HAVE_HBONE HAVE_XDS PEER_NODE_IPS ADDR STATUS=OK
@@ -751,11 +751,11 @@ Run this loop on a schedule. When a control-plane node in cluster3 is replaced, 
 |---|---|---|
 | A peer node in one cluster is replaced | 1 stale Gateway | 3 stale Gateways, one in each other cluster |
 | A fifth cluster joins | | 8 new Gateways: 4 in the new cluster, 1 in each existing cluster. Add its trust domain to every policy in all five clusters |
-| An upgrade (lab `017`) | Drift check for 2 Gateways first | Drift check for 12 Gateways first, then upgrade one cluster at a time |
+| An upgrade (lab `018`) | Drift check for 2 Gateways first | Drift check for 12 Gateways first, then upgrade one cluster at a time |
 
 ## Cleanup
 
-Remove the probe pods, and take cluster3 and cluster4 out of the mesh. Move traffic off them first, as lab `012` describes. Then delete their remote-peer Gateways on every side, and put the two-cluster policies back in cluster1 and cluster2:
+Remove the probe pods, and take cluster3 and cluster4 out of the mesh. Move traffic off them first, as lab `013` describes. Then delete their remote-peer Gateways on every side, and put the two-cluster policies back in cluster1 and cluster2:
 ```bash
 for entry in "${ALL_CLUSTERS[@]}"; do
   kubectl delete pod reach-probe -n default --context "${entry%%=*}" --ignore-not-found
@@ -780,7 +780,7 @@ NAMESPACE          SERVICE NAME                           SERVICE VIP           
 bookinfo-frontends autogen.bookinfo-frontends.productpage 240.240.0.1,2001:2::1 None     2/2
 ```
 
-The global productpage is back to two endpoints. Istio and Bookinfo stay installed on cluster3 and cluster4. Lab `019` removes them when you add the two contexts to its cluster list.
+The global productpage is back to two endpoints. Istio and Bookinfo stay installed on cluster3 and cluster4. Lab `020` removes them when you add the two contexts to its cluster list.
 
 ## Next Steps
 At this point we have completed the following objectives:
@@ -792,4 +792,4 @@ At this point we have completed the following objectives:
 - Failed productpage over across four clusters
 - Ran the drift check for all twelve remote-peer Gateways
 
-In the next step `019` we will remove everything this workshop created
+In the next step `020` we will remove everything this workshop created

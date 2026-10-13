@@ -86,4 +86,4 @@ At this point we have completed the following objectives
 - Enrolled the bookinfo namespaces into Ambient Mesh on cluster1 and cluster2
 - Validated workloads are enrolled in the mesh using `istioctl zc workloads`
 
-In the next step `005` we will expose the bookinfo application on cluster1 via an Ingress Gateway
+In the next step `005` we will install agentgateway as the ingress gateway on cluster1

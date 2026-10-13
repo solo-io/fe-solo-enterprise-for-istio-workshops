@@ -10,7 +10,7 @@
 ![](../images/egress-1.png)
 
 ## Prerequisites
-- This lab assumes you have completed setup from labs `000-014`
+- This lab assumes you have completed setup from labs `000-015`
 
 Ensure the following environment variables are set:
 ```bash
@@ -293,4 +293,4 @@ At this point we have completed the following objectives:
 - Allowed only one identity and one method to reach the partner, with an `AuthorizationPolicy` on the `ServiceEntry`
 - Identified the traffic that the egress waypoint does not catch, and how to close that path
 
-In the next step `016` we will convert ingress-nginx Ingress objects to Gateway API routes
+In the next step `017` we will convert ingress-nginx Ingress objects to Gateway API routes

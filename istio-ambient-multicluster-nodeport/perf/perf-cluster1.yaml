@@ -1,4 +1,4 @@
-# Lab 009: workloads that measure each east-west path in cluster1.
+# Lab 010: workloads that measure each east-west path in cluster1.
 # Every client and server is a fortio pod, so every path serves the same /echo handler.
 #   fortio-client          in the mesh, sends the test load
 #   fortio-client-nomesh   out of the mesh, baseline client
@@ -165,7 +165,7 @@ metadata:
 spec:
   parentRefs:
   - name: ingress
-    namespace: istio-system
+    namespace: agentgateway-system
   rules:
   - matches:
     - path:

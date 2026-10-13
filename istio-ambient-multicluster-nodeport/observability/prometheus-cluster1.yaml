@@ -1,4 +1,4 @@
-# Lab 010: Prometheus in cluster1.
+# Lab 011: Prometheus in cluster1.
 # Central Prometheus: scrapes the cluster1 mesh components and receives remote writes
 # from the Prometheus agent in every other cluster. Grafana queries this instance only.
 apiVersion: v1
@@ -48,7 +48,8 @@ data:
       scrape_interval: 15s
     scrape_configs:
     # One job for every mesh component. Istio annotates ztunnel, istiod, gateways and
-    # waypoints with prometheus.io/scrape, port and path. Application pods are not scraped:
+    # waypoints with prometheus.io/scrape, port and path, and agentgateway annotates its
+    # gateway pods the same way. Application pods are not scraped:
     # in ambient mode ztunnel and the waypoints report the request metrics for them.
     - job_name: mesh
       kubernetes_sd_configs:
@@ -57,11 +58,12 @@ data:
       - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
         action: keep
         regex: "true"
-      # Mesh components only: anything in istio-system or istio-gateways, plus waypoints
-      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_pod_label_gateway_istio_io_managed]
+      # Mesh components only: anything in istio-system or istio-gateways, waypoints, and
+      # the agentgateway gateway pods (not its controller or add-on services)
+      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_pod_label_gateway_istio_io_managed, __meta_kubernetes_pod_label_gateway_networking_k8s_io_gateway_name]
         separator: ";"
         action: keep
-        regex: "(istio-system|istio-gateways);.*|.*;istio.io-mesh-controller"
+        regex: "(istio-system|istio-gateways);.*|.*;istio.io-mesh-controller;.*|agentgateway-system;[^;]*;.+"
       - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
         regex: '([^:]+)(?::\d+)?;(\d+)'
         replacement: '$1:$2'
@@ -81,7 +83,7 @@ data:
       metric_relabel_configs:
       - source_labels: [__name__]
         action: keep
-        regex: "istio_requests_total|istio_request_duration_milliseconds_bucket|istio_tcp_.*|pilot_xds_pushes|pilot_proxy_convergence_time_bucket|pilot_xds|envoy_cluster_upstream_rq_retry|process_resident_memory_bytes|process_cpu_seconds_total"
+        regex: "istio_requests_total|istio_request_duration_milliseconds_bucket|istio_tcp_.*|agentgateway_requests_total|agentgateway_request_duration_seconds_bucket|pilot_xds_pushes|pilot_proxy_convergence_time_bucket|pilot_xds|envoy_cluster_upstream_rq_retry|process_resident_memory_bytes|process_cpu_seconds_total"
     # Prometheus itself, so you can compare the footprint of the server and the agent
     - job_name: prometheus
       static_configs:

@@ -1,4 +1,4 @@
-# Lab 016: a team's existing ingress-nginx objects for Bookinfo, as they would sit in Git.
+# Lab 017: a team's existing ingress-nginx objects for Bookinfo, as they would sit in Git.
 # 1. Host and path routing with a canary that sends 20 percent to a second Service
 apiVersion: networking.k8s.io/v1
 kind: Ingress

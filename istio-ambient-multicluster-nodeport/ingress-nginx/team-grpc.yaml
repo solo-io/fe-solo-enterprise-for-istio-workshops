@@ -1,4 +1,4 @@
-# Lab 016: a gRPC service behind ingress-nginx, with TLS to the backend and a client
+# Lab 017: a gRPC service behind ingress-nginx, with TLS to the backend and a client
 # certificate for backend mTLS.
 apiVersion: networking.k8s.io/v1
 kind: Ingress

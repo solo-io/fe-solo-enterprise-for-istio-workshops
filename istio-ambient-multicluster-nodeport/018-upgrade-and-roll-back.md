@@ -8,9 +8,9 @@
 - Roll both clusters back to 1.28 with the same procedure
 
 ## Prerequisites
-- This lab assumes you have completed setup from labs `000-016`
+- This lab assumes you have completed setup from labs `000-017`
 - Vegeta is installed: see [000-tools.md](000-tools.md#vegeta-cli-load-generator)
-- The NodePort pins from lab `012` are in place
+- The NodePort pins from lab `013` are in place
 
 Ensure the following environment variables are set:
 ```bash
@@ -21,7 +21,7 @@ export MESH_NAME_CLUSTER2=cluster2    # Recommended to keep as cluster2 for POC
 export FROM_VERSION=1.28.10-patch0
 export TO_VERSION=1.29.7-patch0
 export HELM_REPO=oci://us-docker.pkg.dev/soloio-img/istio-helm
-[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 005 in this shell, or its port-forward fallback."
+[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
 ```
 
 ## Background
@@ -41,7 +41,7 @@ The peered clusters keep working while one runs 1.28 and the other 1.29. The eas
 
 ## Check the Mesh Before You Start
 
-Check the peering from both sides and confirm that the remote-peer Gateways match their peers. A ztunnel or istiod restart re-establishes every peering connection, so an upgrade is when drift from lab `012` would surface. The function is the same `check_peer_drift` from lab `012`:
+Check the peering from both sides and confirm that the remote-peer Gateways match their peers. A ztunnel or istiod restart re-establishes every peering connection, so an upgrade is when drift from lab `013` would surface. The function is the same `check_peer_drift` from lab `013`:
 ```bash
 check_peer_drift() {
   local LOCAL_CTX=$1 PEER_CTX=$2 PEER_MESH=$3 GW WANT_HBONE WANT_XDS HAVE_HBONE HAVE_XDS PEER_NODE_IPS ADDR STATUS=OK
@@ -194,18 +194,19 @@ Success       [ratio]                           100.00%
 Status Codes  [code:count]                      200:628  
 ```
 
-Every request so far crossed from the 1.28 ingress gateway in cluster1 to the 1.29 data plane in cluster2. In this run all of them succeeded.
+Every request so far crossed from agentgateway in cluster1, with its 1.28 mesh peers, to the 1.29 data plane in cluster2. In this run all of them succeeded.
 
 ## Upgrade cluster1
 
-Run the same four steps in cluster1. This upgrade also rolls the ingress gateway that receives the load:
+Run the same four steps in cluster1:
 ```bash
 move_release $KUBECONTEXT_CLUSTER1 istio-base base    $FROM_VERSION $TO_VERSION
 move_release $KUBECONTEXT_CLUSTER1 istiod     istiod  $FROM_VERSION $TO_VERSION
 move_release $KUBECONTEXT_CLUSTER1 istio-cni  cni     $FROM_VERSION $TO_VERSION
 move_release $KUBECONTEXT_CLUSTER1 ztunnel    ztunnel $FROM_VERSION $TO_VERSION
-kubectl rollout status deploy/ingress-istio -n istio-system --watch --timeout=120s --context $KUBECONTEXT_CLUSTER1
 ```
+
+> **agentgateway during the upgrade.** agentgateway has its own Helm release, so the Istio upgrade leaves its pods running. It keeps the mesh certificate that istiod issued, and opens HBONE connections to 1.28 and 1.29 ztunnels alike. Upgrade agentgateway on its own release cycle, with the Helm commands from lab `005`.
 
 Check that every Istio image in both clusters is now 1.29, and that the peering and the load are healthy:
 ```bash
@@ -225,7 +226,7 @@ Expected output (the success ratio can be below 100 percent, as above):
 == cluster1
    2 install-cni:1.29.7-patch0-solo-distroless
    1 pilot:1.29.7-patch0-solo-distroless
-   2 proxyv2:1.29.7-patch0-solo-distroless
+   1 proxyv2:1.29.7-patch0-solo-distroless
    3 ztunnel:1.29.7-patch0-solo-distroless
 == cluster2
    2 install-cni:1.29.7-patch0-solo-distroless
@@ -239,9 +240,9 @@ Success       [ratio]                           100.00%
 Status Codes  [code:count]                      200:1242  
 ```
 
-Each cluster has three ztunnel-image pods, two node ztunnels and the east-west gateway. cluster1 has two `proxyv2` pods, the ingress gateway and the waypoint. The NodePort pins from lab `012` kept the east-west NodePorts unchanged through the upgrade, so the drift check still passes. In this run both upgrades finished with no failed requests.
+Each cluster has three ztunnel-image pods, two node ztunnels and the east-west gateway, and one `proxyv2` pod, the waypoint. The agentgateway pods use their own images, so the list does not show them. The NodePort pins from lab `013` kept the east-west NodePorts unchanged through the upgrade, so the drift check still passes. In this run both upgrades finished with no failed requests.
 
-> **New in 1.29: endpoint health metrics.** ztunnel 1.29 exports `istio_outlier_detection_endpoints` and `istio_outlier_detection_endpoints_unhealthy`. They count the endpoints that ztunnel has taken out of rotation, such as the cluster1 productpage pod in lab `007` after policy rejections. Add `istio_outlier_detection_.*` to the lab `010` keep-list to chart them.
+> **New in 1.29: endpoint health metrics.** ztunnel 1.29 exports `istio_outlier_detection_endpoints` and `istio_outlier_detection_endpoints_unhealthy`. They count the endpoints that ztunnel has taken out of rotation, such as the cluster1 productpage pod in lab `008` after policy rejections. Add `istio_outlier_detection_.*` to the lab `011` keep-list to chart them.
 
 ## Roll Back to 1.28
 
@@ -280,9 +281,9 @@ The second command prints one line per failed request, and printed none in this 
 17:33:12 503 503 Service Unavailable
 ```
 
-Their response body was `upstream connect error or disconnect/reset before headers. reset reason: connection termination`. A proxy on the cross-cluster path restarted while the request was in flight and closed its connection. Two rollouts restart a proxy on that path:
+A proxy on the cross-cluster path restarted while the request was in flight and closed its connection, so the gateway answered `503`. Two rollouts restart a proxy on that path:
 
-- The ztunnel rollout in cluster2. The ingress gateway's connections to productpage go through the ztunnel on productpage's node.
+- The ztunnel rollout in cluster2. agentgateway's connections to productpage go through the ztunnel on productpage's node.
 - The east-west gateway rollout that follows the istiod upgrade in cluster2. Every request in this lab crosses the cluster2 east-west gateway, and the new istiod replaces its pod within seconds of the upgrade.
 
 Whether a restart hits a request depends on timing, so plan for a small number of resets during each ztunnel rollout and each istiod upgrade.
@@ -326,4 +327,4 @@ At this point we have completed the following objectives:
 - Measured the request success rate during the upgrade and the rollback
 - Rolled both clusters back to 1.28 with the same procedure
 
-In the next step `018` we will add two more clusters and peer all four over NodePort
+In the next step `019` we will add two more clusters and peer all four over NodePort

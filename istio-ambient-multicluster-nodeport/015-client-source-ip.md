@@ -4,14 +4,15 @@
 - See which client address the ingress gateway records with `externalTrafficPolicy: Cluster` and with `Local`
 - Accept PROXY protocol from a load balancer, so the gateway records the client behind it
 - Follow the client IP from the gateway to a backend in the same cluster and in the peer cluster
-- Record the client IP in the gateway access log for observability tools
+- Record the client IP in the gateway log for observability tools
 
 ## Prerequisites
-- This lab assumes you have completed setup from labs `000-013`
+- This lab assumes you have completed setup from labs `000-014`
 
 Ensure the following environment variables are set:
 ```bash
 export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context name
+export MESH_NAME_CLUSTER1=cluster1    # Recommended to keep as cluster1 for POC
 export KUBECONTEXT_CLUSTER2=cluster2  # Replace with your actual kubectl context name
 ```
 
@@ -23,11 +24,13 @@ A request from outside the cluster passes through up to three components that ca
 |---|---|---|
 | External load balancer (hardware, or cloud) | A proxying load balancer opens a new connection, so the source becomes the load balancer | PROXY protocol: the load balancer sends the client address in a header at the start of the connection |
 | kube-proxy, for a `NodePort` or `LoadBalancer` Service | `externalTrafficPolicy: Cluster` can forward to a pod on any node, and SNATs the connection | `externalTrafficPolicy: Local`: only nodes with a gateway pod accept traffic, and kube-proxy keeps the source |
-| The ingress gateway | Terminates the client connection and opens a new one to the backend | The gateway writes the client address into `X-Forwarded-For` and `X-Envoy-External-Address` |
+| The ingress gateway | Terminates the client connection and opens a new one to the backend | A gateway policy writes the source address the gateway saw into `X-Forwarded-For` |
 
-After the gateway, the backend's L4 source is always the gateway, or the peer cluster's east-west gateway for a cross-cluster call. The client IP reaches the backend as an HTTP header, and it reaches observability tools through the gateway's access log.
+After the gateway, the backend's L4 source is always the gateway, or the peer cluster's east-west gateway for a cross-cluster call. The client IP reaches the backend as an HTTP header, and it reaches observability tools through the gateway's log.
 
-This lab uses a separate `ingress-edge` Gateway with a `NodePort` Service, so the changes do not affect the `ingress` Gateway that the other labs use. A namespace `outside` in cluster2, outside the mesh, plays the external side:
+agentgateway adds no `X-Forwarded-For` header on its own, and it forwards a header that the client sent unchanged. This lab's gateway policy sets the header from the connection's source address, with the CEL expression `source.address`. Setting the header replaces whatever the client sent, so a client cannot forge its own address.
+
+This lab uses a separate agentgateway `ingress-edge` Gateway with a `NodePort` Service, so the changes do not affect the `ingress` Gateway that the other labs use. A namespace `outside` in cluster2, outside the mesh, plays the external side:
 
 | Pod in cluster2 `outside` | Plays the role of |
 |---|---|
@@ -89,18 +92,36 @@ EOF
 done
 ```
 
-Create the `ingress-edge` Gateway in cluster1 and route it to the global `echo` hostname:
+Create the `ingress-edge` Gateway in cluster1 with its own parameters, route it to the global `echo` hostname, and attach the policy that sets `X-Forwarded-For`:
 ```bash
 kubectl apply --context $KUBECONTEXT_CLUSTER1 -f - <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayParameters
+metadata:
+  name: ingress-edge-config
+  namespace: agentgateway-system
+spec:
+  istio:
+    enabled: true
+    trustDomain: $MESH_NAME_CLUSTER1.local
+    clusterId: $MESH_NAME_CLUSTER1
+    network: $MESH_NAME_CLUSTER1
+  service:
+    spec:
+      type: NodePort
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: ingress-edge
-  namespace: istio-system
-  annotations:
-    networking.istio.io/service-type: NodePort
+  namespace: agentgateway-system
 spec:
-  gatewayClassName: istio
+  gatewayClassName: enterprise-agentgateway
+  infrastructure:
+    parametersRef:
+      group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayParameters
+      name: ingress-edge-config
   listeners:
   - name: http
     port: 80
@@ -117,15 +138,33 @@ metadata:
 spec:
   parentRefs:
   - name: ingress-edge
-    namespace: istio-system
+    namespace: agentgateway-system
   rules:
   - backendRefs:
     - kind: Hostname
       group: networking.istio.io
       name: echo.client-ip.mesh.internal
       port: 8080
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: ingress-edge-client-ip
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: ingress-edge
+  traffic:
+    transformation:
+      request:
+        set:
+        - name: x-forwarded-for
+          value: source.address
 EOF
-kubectl rollout status deploy/ingress-edge-istio -n istio-system --watch --timeout=120s --context $KUBECONTEXT_CLUSTER1
+kubectl wait --for=condition=Programmed gateway/ingress-edge -n agentgateway-system --timeout=120s --context $KUBECONTEXT_CLUSTER1
+kubectl rollout status deploy/ingress-edge -n agentgateway-system --watch --timeout=120s --context $KUBECONTEXT_CLUSTER1
 ```
 
 Deploy the external client in cluster2:
@@ -160,9 +199,9 @@ kubectl rollout status deploy/client -n outside --watch --timeout=120s --context
 
 Read the addresses this lab uses: the edge NodePort, the cluster1 node that runs the edge gateway, the other cluster1 node, and the client's own addresses:
 ```bash
-export EDGE_PORT=$(kubectl get svc ingress-edge-istio -n istio-system --context $KUBECONTEXT_CLUSTER1 \
+export EDGE_PORT=$(kubectl get svc ingress-edge -n agentgateway-system --context $KUBECONTEXT_CLUSTER1 \
   -o jsonpath='{.spec.ports[?(@.port==80)].nodePort}')
-export GATEWAY_NODE_IP=$(kubectl get pod -n istio-system -l gateway.networking.k8s.io/gateway-name=ingress-edge \
+export GATEWAY_NODE_IP=$(kubectl get pod -n agentgateway-system -l gateway.networking.k8s.io/gateway-name=ingress-edge \
   --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.items[0].status.hostIP}')
 export OTHER_NODE_IP=$(kubectl get nodes --context $KUBECONTEXT_CLUSTER1 \
   -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address}{"\n"}{end}' | grep -v "^$GATEWAY_NODE_IP$" | head -1)
@@ -173,14 +212,14 @@ echo "edge NodePort $EDGE_PORT, gateway node $GATEWAY_NODE_IP, other node $OTHER
 
 Expected output (addresses differ on your machine):
 ```
-client pod IP 10.244.2.74, client node IP 172.30.0.5
-edge NodePort 32562, gateway node 172.30.0.3, other node 172.30.0.2
+client pod IP 10.244.1.44, client node IP 172.30.0.5
+edge NodePort 31701, gateway node 172.30.0.3, other node 172.30.0.2
 ```
 
-Define a helper that sends a request from the client and prints the fields that matter. `IP` is the source address the `echo` pod saw:
+Define a helper that sends a request from the client and prints the fields that matter. `IP` is the source address the `echo` pod saw. Extra arguments go to `curl`:
 ```bash
 call_edge() {
-  kubectl exec deploy/client -n outside --context $KUBECONTEXT_CLUSTER2 -- curl -s -m 5 "$1" \
+  kubectl exec deploy/client -n outside --context $KUBECONTEXT_CLUSTER2 -- curl -s -m 5 "$@" 2>/dev/null \
     | grep -E "^Cluster=|^IP=|X-Forwarded-For" || echo "no response"
 }
 ```
@@ -197,35 +236,24 @@ Expected output:
 ```
 == via the gateway's node
 Cluster=cluster1
-IP=10.244.2.120
-RequestHeader=X-Forwarded-For:10.244.2.1
+IP=10.244.1.74
+RequestHeader=X-Forwarded-For:10.244.1.1
 == via the other node
 Cluster=cluster1
-IP=10.244.2.120
+IP=10.244.1.74
 RequestHeader=X-Forwarded-For:10.244.0.0
 ```
 
-`X-Forwarded-For` should hold the client address, `172.30.0.5`. It holds an address inside cluster1 instead: the pod bridge on the gateway's node (`10.244.2.1`), or the overlay address of the other node (`10.244.0.0`). kube-proxy SNATs NodePort traffic under `Cluster`, so the gateway never sees the client. `IP=10.244.2.120` is the edge gateway pod: the backend's L4 source is the gateway in every case.
+`X-Forwarded-For` should hold the client address, `172.30.0.5`. It holds an address inside cluster1 instead: the pod bridge on the gateway's node (`10.244.1.1`), or the overlay address of the other node (`10.244.0.0`). kube-proxy SNATs NodePort traffic under `Cluster`, so the gateway never sees the client. `IP=10.244.1.74` is the edge gateway pod: the backend's L4 source is the gateway in every case.
 
 ## With externalTrafficPolicy Local
 
-Istio builds the gateway's Service from the Gateway resource. A ConfigMap referenced in `spec.infrastructure.parametersRef` overlays fields on that Service:
+agentgateway builds the gateway's Service from the `service` field of the Gateway's parameters. Set `externalTrafficPolicy: Local` there:
 ```bash
-kubectl apply --context $KUBECONTEXT_CLUSTER1 -f - <<EOF
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: ingress-edge-options
-  namespace: istio-system
-data:
-  service: |
-    spec:
-      externalTrafficPolicy: Local
-EOF
-kubectl patch gateway ingress-edge -n istio-system --context $KUBECONTEXT_CLUSTER1 --type=merge \
-  -p '{"spec":{"infrastructure":{"parametersRef":{"group":"","kind":"ConfigMap","name":"ingress-edge-options"}}}}'
+kubectl patch enterpriseagentgatewayparameters ingress-edge-config -n agentgateway-system --context $KUBECONTEXT_CLUSTER1 \
+  --type=merge -p '{"spec":{"service":{"spec":{"externalTrafficPolicy":"Local"}}}}'
 sleep 3
-kubectl get svc ingress-edge-istio -n istio-system --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.spec.externalTrafficPolicy}{"\n"}'
+kubectl get svc ingress-edge -n agentgateway-system --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.spec.externalTrafficPolicy}{"\n"}'
 echo "== via the gateway's node"; call_edge http://$GATEWAY_NODE_IP:$EDGE_PORT/
 echo "== via the other node";     call_edge http://$OTHER_NODE_IP:$EDGE_PORT/
 ```
@@ -235,7 +263,7 @@ Expected output:
 Local
 == via the gateway's node
 Cluster=cluster1
-IP=10.244.2.120
+IP=10.244.1.74
 RequestHeader=X-Forwarded-For:172.30.0.5
 == via the other node
 no response
@@ -245,32 +273,34 @@ The gateway now records the client address, `172.30.0.5`. The other node has no 
 
 ## Accept PROXY Protocol from a Load Balancer
 
-A proxying load balancer, such as a hardware load balancer in proxy mode or a cloud load balancer that terminates connections, replaces the client address with its own. PROXY protocol carries the original address in a header at the start of each connection. Turn it on for the edge gateway with the `gatewayTopology.proxyProtocol` proxy setting, added to the gateway pods through the same ConfigMap:
+A proxying load balancer, such as a hardware load balancer in proxy mode or a cloud load balancer that terminates connections, replaces the client address with its own. PROXY protocol carries the original address in a header at the start of each connection. Turn it on for the edge gateway in the `frontend` section of its policy. With PROXY protocol on, `source.address` is the address from the PROXY header:
 ```bash
 kubectl apply --context $KUBECONTEXT_CLUSTER1 -f - <<EOF
-apiVersion: v1
-kind: ConfigMap
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
 metadata:
-  name: ingress-edge-options
-  namespace: istio-system
-data:
-  service: |
-    spec:
-      externalTrafficPolicy: Local
-  deployment: |
-    spec:
-      template:
-        metadata:
-          annotations:
-            proxy.istio.io/config: |
-              gatewayTopology:
-                proxyProtocol: {}
+  name: ingress-edge-client-ip
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: ingress-edge
+  frontend:
+    proxyProtocol:
+      mode: Strict
+      version: V2
+  traffic:
+    transformation:
+      request:
+        set:
+        - name: x-forwarded-for
+          value: source.address
 EOF
 sleep 3
-kubectl rollout status deploy/ingress-edge-istio -n istio-system --watch --timeout=120s --context $KUBECONTEXT_CLUSTER1
-export GATEWAY_NODE_IP=$(kubectl get pod -n istio-system -l gateway.networking.k8s.io/gateway-name=ingress-edge \
-  --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.items[0].status.hostIP}')
 ```
+
+`mode: Strict` requires the header on every connection. `Optional` also accepts connections without it, which lets a client that reaches the gateway directly set its own source address, so use `Strict` on a gateway that sits behind a load balancer.
 
 Deploy haproxy in cluster2 as the load balancer. It accepts plain TCP on port `8080` and opens each connection to the edge gateway with a PROXY protocol v2 header:
 ```bash
@@ -346,57 +376,53 @@ Expected output:
 ```
 == through haproxy (PROXY protocol)
 Cluster=cluster1
-IP=10.244.2.120
-RequestHeader=X-Forwarded-For:10.244.2.74
+IP=10.244.1.74
+RequestHeader=X-Forwarded-For:10.244.1.44
 == direct (no PROXY header)
 no response
 ```
 
-`X-Forwarded-For` is now `10.244.2.74`, the client pod IP. haproxy saw the client before any SNAT and passed that address in the PROXY header. The direct request fails, because a listener with PROXY protocol requires the header on every connection. Put every client of a PROXY protocol gateway behind the load balancer, and keep a separate gateway for clients that connect directly.
+`X-Forwarded-For` is now `10.244.1.44`, the client pod IP. haproxy saw the client before any SNAT and passed that address in the PROXY header. The direct request fails, because `mode: Strict` requires the header on every connection. Put every client of a PROXY protocol gateway behind the load balancer, and keep a separate gateway for clients that connect directly.
 
-> **If the load balancer sends `X-Forwarded-For` instead.** An L7 load balancer that terminates HTTP adds the client to `X-Forwarded-For` rather than using PROXY protocol. Tell the gateway how many proxies to trust with `gatewayTopology.numTrustedProxies` in the same `proxy.istio.io/config` annotation, so it reads the client address from the right position in the header.
+The gateway log records the direct attempt as `proxy protocol error: PROXY protocol header missing`, with the address that connected.
+
+Send a forged `X-Forwarded-For` through haproxy:
+```bash
+call_edge http://haproxy:8080/ -H "X-Forwarded-For: 203.0.113.9"
+```
+
+Expected output:
+```
+Cluster=cluster1
+IP=10.244.1.74
+RequestHeader=X-Forwarded-For:10.244.1.44
+```
+
+The backend sees the client address from the PROXY header, not `203.0.113.9`. The policy sets the header, so the value the client sent never reaches the backend.
+
+> **If the load balancer sends `X-Forwarded-For` instead.** An L7 load balancer that terminates HTTP adds the client to `X-Forwarded-For` rather than using PROXY protocol. Remove the `x-forwarded-for` transformation from the gateway policy, so the gateway forwards the load balancer's header unchanged, and accept connections to the gateway from the load balancer only: the gateway then passes on whatever header arrives.
 
 ## Follow the Client IP Across Clusters
 
-Record the client address at the gateway. Turn on access logging for `ingress-edge`:
-```bash
-kubectl apply --context $KUBECONTEXT_CLUSTER1 -f - <<EOF
-apiVersion: telemetry.istio.io/v1
-kind: Telemetry
-metadata:
-  name: ingress-edge-access-logging
-  namespace: istio-system
-spec:
-  targetRefs:
-  - kind: Gateway
-    group: gateway.networking.k8s.io
-    name: ingress-edge
-  accessLogging:
-  - providers:
-    - name: envoy
-EOF
-sleep 3
-```
-
-Scale `echo` to zero in cluster1, so the gateway fails over to cluster2, and call it through haproxy:
+agentgateway writes one `request` line per request to its log, with the source address it read in `src.addr`. Scale `echo` to zero in cluster1, so the gateway fails over to cluster2, call it through haproxy, and read the gateway's last request line:
 ```bash
 kubectl scale deploy/echo -n client-ip --replicas 0 --context $KUBECONTEXT_CLUSTER1
 kubectl wait --for=delete pod -l app=echo -n client-ip --timeout=60s --context $KUBECONTEXT_CLUSTER1
 sleep 3
 call_edge http://haproxy:8080/
 sleep 2
-kubectl logs deploy/ingress-edge-istio -n istio-system --context $KUBECONTEXT_CLUSTER1 --since=1m | tail -1
+kubectl logs deploy/ingress-edge -n agentgateway-system --context $KUBECONTEXT_CLUSTER1 --since=1m | grep "request gateway=" | tail -1
 ```
 
 Expected output:
 ```
 Cluster=cluster2
-IP=10.244.2.56
-RequestHeader=X-Forwarded-For:10.244.2.74
-[2026-10-13T00:12:53.937Z] "GET / HTTP/1.1" 200 - via_upstream - "-" 0 518 10 9 "10.244.2.74" "curl/8.22.0" "c0c0546d-e1f7-4677-9ecb-8e0777e28564" "haproxy:8080" "envoy://connect_network_originate_inner/echo.client-ip.mesh.internal:8080/172.30.0.4" outbound|8080||echo.client-ip.mesh.internal envoy://internal_client_address/ 10.244.2.75:8080 10.244.2.74:49588 - client-ip.echo.0
+IP=10.244.1.30
+RequestHeader=X-Forwarded-For:10.244.1.44
+2026-10-13T19:55:06.100293Z	info	request gateway=agentgateway-system/ingress-edge listener=http route=client-ip/echo endpoint=echo.client-ip.mesh.internal:8080 src.addr=10.244.1.44:35074 http.method=GET http.host=haproxy http.path=/ http.version=HTTP/1.1 http.status=200 protocol=http duration=4ms
 ```
 
-cluster2 served the request. Its L4 source, `IP=10.244.2.56`, is the cluster2 east-west gateway, and `X-Forwarded-For` still carries the client, `10.244.2.74`. In the access log, `"10.244.2.74"` is the `X-Forwarded-For` value and `10.244.2.74:49588` is the downstream address that the gateway read from the PROXY header. Ship these logs to your log pipeline to report client addresses per request.
+cluster2 served the request. Its L4 source, `IP=10.244.1.30`, is the cluster2 east-west gateway, and `X-Forwarded-For` still carries the client, `10.244.1.44`. In the gateway log, `src.addr` is the client address that the gateway read from the PROXY header, and `route` and `endpoint` show which route and global hostname served it. Ship these logs to your log pipeline to report client addresses per request.
 
 Bring `echo` back in cluster1:
 ```bash
@@ -408,22 +434,22 @@ kubectl rollout status deploy/echo -n client-ip --watch --timeout=90s --context 
 
 | Environment | Load balancer in front of the gateway | Settings that keep the client address |
 |---|---|---|
-| On-premises, hardware load balancer in proxy mode | Opens a new connection per client | PROXY protocol on the load balancer and `gatewayTopology.proxyProtocol` on the gateway, as above. `externalTrafficPolicy: Local` if the load balancer targets NodePorts |
+| On-premises, hardware load balancer in proxy mode | Opens a new connection per client | PROXY protocol on the load balancer and `frontend.proxyProtocol` on the gateway policy, as above. `externalTrafficPolicy: Local` if the load balancer targets NodePorts |
 | On-premises, L3/L4 load balancer that keeps the source (for example BGP or ECMP to the nodes) | Forwards packets with the client source | `externalTrafficPolicy: Local` only |
 | AWS Network Load Balancer | Keeps the source for instance targets, or sends PROXY protocol v2 when you turn it on for the target group | `externalTrafficPolicy: Local`, or PROXY protocol on both sides |
 | Azure Standard Load Balancer | Forwards packets with the client source | `externalTrafficPolicy: Local` |
-| Any L7 load balancer that terminates HTTP | Adds `X-Forwarded-For` | `gatewayTopology.numTrustedProxies` |
+| Any L7 load balancer that terminates HTTP | Adds `X-Forwarded-For` | Forward the load balancer's header unchanged, and accept traffic from the load balancer only |
 
-The steps after the gateway are the same everywhere: the client IP travels in `X-Forwarded-For` to the backend, in the same cluster or across clusters, and the gateway access log records it. Confirm the load balancer behavior for your own load balancer models and settings with the same `call_edge` test.
+The steps after the gateway are the same everywhere: the client IP travels in `X-Forwarded-For` to the backend, in the same cluster or across clusters, and the gateway log records it. Confirm the load balancer behavior for your own load balancer models and settings with the same `call_edge` test.
 
 ## Cleanup
 
-Remove the edge gateway, its options and access logging, the `echo` backend and the `outside` namespace:
+Remove the edge gateway, its parameters and policy, the `echo` backend and the `outside` namespace:
 ```bash
-kubectl delete telemetry ingress-edge-access-logging -n istio-system --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
 kubectl delete httproute echo -n client-ip --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
-kubectl delete gateway ingress-edge -n istio-system --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
-kubectl delete configmap ingress-edge-options -n istio-system --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
+kubectl delete enterpriseagentgatewaypolicy ingress-edge-client-ip -n agentgateway-system --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
+kubectl delete gateway ingress-edge -n agentgateway-system --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
+kubectl delete enterpriseagentgatewayparameters ingress-edge-config -n agentgateway-system --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
 kubectl delete namespace client-ip --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
 kubectl delete namespace client-ip outside --context $KUBECONTEXT_CLUSTER2 --ignore-not-found
 ```
@@ -433,6 +459,6 @@ At this point we have completed the following objectives:
 - Saw which client address the ingress gateway recorded with `externalTrafficPolicy: Cluster` and with `Local`
 - Accepted PROXY protocol from a load balancer, so the gateway recorded the client behind it
 - Followed the client IP from the gateway to a backend in the same cluster and in the peer cluster
-- Recorded the client IP in the gateway access log for observability tools
+- Recorded the client IP in the gateway log for observability tools
 
-In the next step `015` we will send egress traffic through a gateway pinned to dedicated egress nodes
+In the next step `016` we will send egress traffic through a gateway pinned to dedicated egress nodes
