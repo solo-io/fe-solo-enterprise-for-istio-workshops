@@ -227,6 +227,49 @@
           "legendFormat": "{{source_cluster}}/{{source_workload_namespace}}/{{source_workload}} -> {{cluster}}"
         }
       ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Ingress requests by route and status",
+      "description": "Requests that agentgateway served for routes in this namespace, by route, status code and cluster.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (cluster, route, status) (rate(agentgateway_requests_total{cluster=~\"$cluster\", route=~\"$namespace/.*\"}[1m]))",
+          "legendFormat": "{{cluster}} {{route}} {{status}}"
+        }
+      ]
     }
   ]
 }

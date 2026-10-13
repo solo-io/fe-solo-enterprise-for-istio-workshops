@@ -8,14 +8,14 @@
 - Quarantine a whole identity in every cluster with a root-namespace `DENY` policy
 
 ## Prerequisites
-- This lab assumes you have completed setup from labs `000-006`
-- `productpage` is a global service and the ingress route points at `productpage.bookinfo-frontends.mesh.internal` (lab `006`)
+- This lab assumes you have completed setup from labs `000-007`
+- `productpage` is a global service and the ingress route points at `productpage.bookinfo-frontends.mesh.internal` (lab `007`)
 
 Ensure the following environment variables are set:
 ```bash
 export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context name
 export KUBECONTEXT_CLUSTER2=cluster2  # Replace with your actual kubectl context name
-[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 005 in this shell, or its port-forward fallback."
+[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
 ```
 
 ## Background
@@ -55,24 +55,24 @@ curl -s http://$INGRESS_ADDR/productpage
 
 Expected output:
 ```
-upstream connect error or disconnect/reset before headers. reset reason: connection termination
+upstream call failed: Connect: unexpected status: 401 Unauthorized
 ```
 
-The ingress gateway reached the ztunnel in front of productpage, and ztunnel closed the connection. Find the rejection in the cluster1 ztunnel logs:
+agentgateway opened an HBONE connection to the ztunnel in front of productpage, and ztunnel refused the HBONE `CONNECT` with `401 Unauthorized`. Find the rejection in the cluster1 ztunnel logs:
 ```bash
 kubectl logs -n istio-system -l app=ztunnel --context $KUBECONTEXT_CLUSTER1 --prefix --since=1m --tail=-1 | grep "policy rejection" | tail -1
 ```
 
 Expected output:
 ```
-[pod/ztunnel-cqfgc/istio-proxy] 2026-10-12T23:07:49.901833Z	error	access	connection complete	src.addr=10.244.2.68:60880 src.workload="ingress-istio-647c569-p8pj8" src.namespace="istio-system" src.identity="spiffe://cluster1.local/ns/istio-system/sa/ingress-istio" dst.addr=10.244.2.74:15008 dst.hbone_addr=10.244.2.74:9080 dst.service="productpage.bookinfo-frontends.mesh.internal" dst.workload="productpage-v1-59c74584cf-cqsrr" dst.namespace="bookinfo-frontends" dst.identity="spiffe://cluster1.local/ns/bookinfo-frontends/sa/bookinfo-productpage" direction="inbound" bytes_sent=0 bytes_recv=0 duration="0ms" error="connection closed due to policy rejection: allow policies exist, but none allowed"
+[pod/ztunnel-q6qfl/istio-proxy] 2026-10-13T19:09:58.201882Z	error	access	connection complete	src.addr=10.244.1.42:57198 src.workload="ingress-55cd48866f-8bgcj" src.namespace="agentgateway-system" src.identity="spiffe://cluster1.local/ns/agentgateway-system/sa/ingress" dst.addr=10.244.1.50:15008 dst.hbone_addr=10.244.1.50:9080 dst.service="productpage.bookinfo-frontends.svc.cluster.local" dst.workload="productpage-v1-59c74584cf-59984" dst.namespace="bookinfo-frontends" dst.identity="spiffe://cluster1.local/ns/bookinfo-frontends/sa/bookinfo-productpage" direction="inbound" bytes_sent=0 bytes_recv=0 duration="0ms" error="connection closed due to policy rejection: allow policies exist, but none allowed"
 ```
 
 `src.identity` is the caller and `dst.identity` is the workload being protected. `error=... allow policies exist, but none allowed` names the reason: `allow-nothing` exists, and no policy allows the ingress gateway.
 
 ## Allow Each Hop by Identity
 
-Look at one of the allow policies. The `principals` list names the caller in both trust domains:
+Look at one of the allow policies. The `principals` list names the caller in both trust domains. For productpage the caller is the agentgateway ingress, which runs as the `ingress` service account in `agentgateway-system` (lab `005`):
 ```bash
 cat auth-policy/productpage-auth.yaml
 ```
@@ -113,12 +113,12 @@ Expected output:
    2 cluster2
 ```
 
-The cluster1 ingress gateway called productpage in cluster2, and cluster2 allowed it because `productpage-auth` lists `cluster1.local/ns/istio-system/sa/ingress-istio`.
+The cluster1 ingress gateway called productpage in cluster2, and cluster2 allowed it because `productpage-auth` lists `cluster1.local/ns/agentgateway-system/sa/ingress`.
 
 Now see what happens when a cluster trusts only its own trust domain. Remove the `cluster1.local` entry from the cluster2 policy:
 ```bash
 kubectl patch authorizationpolicy productpage-auth -n bookinfo-frontends --context $KUBECONTEXT_CLUSTER2 --type=json \
-  -p '[{"op":"replace","path":"/spec/rules/0/from/0/source/principals","value":["cluster2.local/ns/istio-system/sa/ingress-istio"]}]'
+  -p '[{"op":"replace","path":"/spec/rules/0/from/0/source/principals","value":["cluster2.local/ns/agentgateway-system/sa/ingress"]}]'
 sleep 3
 curl -s http://$INGRESS_ADDR/productpage -o /dev/null -w "%{http_code}\n"
 kubectl logs -n istio-system -l app=ztunnel --context $KUBECONTEXT_CLUSTER2 --prefix --since=1m --tail=-1 | grep "policy rejection" | tail -1
@@ -127,10 +127,10 @@ kubectl logs -n istio-system -l app=ztunnel --context $KUBECONTEXT_CLUSTER2 --pr
 Expected output:
 ```
 503
-[pod/ztunnel-k82tv/istio-proxy] 2026-10-12T23:08:13.415577Z	error	access	connection complete	src.addr=10.244.2.56:37352 src.workload="ingress-istio" src.namespace="istio-system" src.identity="spiffe://cluster1.local/ns/istio-system/sa/ingress-istio" dst.addr=10.244.2.42:15008 dst.hbone_addr=productpage.bookinfo-frontends.mesh.internal:9080 dst.service="productpage.bookinfo-frontends.mesh.internal" dst.workload="productpage-v1-59c74584cf-pxvqb" dst.namespace="bookinfo-frontends" dst.identity="spiffe://cluster2.local/ns/bookinfo-frontends/sa/bookinfo-productpage" direction="inbound" bytes_sent=0 bytes_recv=0 duration="0ms" error="connection closed due to policy rejection: allow policies exist, but none allowed"
+[pod/ztunnel-xh9gv/istio-proxy] 2026-10-13T19:10:09.131655Z	error	access	connection complete	src.addr=10.244.1.30:34238 src.workload="ingress" src.namespace="agentgateway-system" src.identity="spiffe://cluster1.local/ns/agentgateway-system/sa/ingress" dst.addr=10.244.1.18:15008 dst.hbone_addr=productpage.bookinfo-frontends.mesh.internal:9080 dst.service="productpage.bookinfo-frontends.mesh.internal" dst.workload="productpage-v1-59c74584cf-cx892" dst.namespace="bookinfo-frontends" dst.identity="spiffe://cluster2.local/ns/bookinfo-frontends/sa/bookinfo-productpage" direction="inbound" bytes_sent=0 bytes_recv=0 duration="0ms" error="connection closed due to policy rejection: allow policies exist, but none allowed"
 ```
 
-The cluster2 ztunnel rejected `spiffe://cluster1.local/...`. Two more fields show the cross-cluster path. `src.addr` is the cluster2 east-west gateway pod, which delivered the HBONE connection from the NodePort. `src.workload="ingress-istio"` has no pod suffix, because cluster2 knows the caller only through peering. This is the symptom to look for when failover works in one direction and fails in the other: the destination cluster's policy is missing the caller's trust domain.
+The cluster2 ztunnel rejected `spiffe://cluster1.local/...`. `src.addr` is the cluster2 east-west gateway pod, which delivered the HBONE connection from the NodePort. `src.workload="ingress"` has no pod suffix, because cluster2 knows the caller only through peering. This is the symptom to look for when failover works in one direction and fails in the other: the destination cluster's policy is missing the caller's trust domain.
 
 Restore the policy and scale productpage back up in cluster1:
 ```bash
@@ -402,7 +402,7 @@ Remove the `tenant-a` namespace:
 kubectl delete namespace tenant-a --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
 ```
 
-The deny-all baseline, the four Bookinfo allow policies and the `STRICT` PeerAuthentication stay in place for the rest of the workshop. Later labs add the policies their own workloads need, the same way a team would in production. Lab `019` removes them.
+The deny-all baseline, the four Bookinfo allow policies and the `STRICT` PeerAuthentication stay in place for the rest of the workshop. Later labs add the policies their own workloads need, the same way a team would in production. Lab `020` removes them.
 
 ## Next Steps
 At this point we have completed the following objectives:
@@ -412,4 +412,4 @@ At this point we have completed the following objectives:
 - Quarantined a single suspect pod by removing it from the mesh
 - Quarantined a whole identity in every cluster with a root-namespace `DENY` policy
 
-In the next step `008` we will add a waypoint for L7 policy and traffic management
+In the next step `009` we will add a waypoint for L7 policy and traffic management

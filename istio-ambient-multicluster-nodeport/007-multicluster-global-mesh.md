@@ -7,11 +7,11 @@
 - Reconfigure ingress to global service hostname (*.<namespace>.mesh.internal)
 - Fail productpage over from cluster1 to cluster2 and back
 
-![](../images/multicluster-global-mesh-2.png)
+![](../images/multicluster-global-mesh-agentgateway-1.png)
 
 ## Prerequisites
-- This lab assumes you have completed setup from labs `000-005`
-- `INGRESS_ADDR` from lab `005` is set in your shell. If you used the port-forward fallback, keep it running and keep `INGRESS_ADDR=localhost:8080`
+- This lab assumes you have completed setup from labs `000-006`
+- `INGRESS_ADDR` from lab `006` is set in your shell. If you used the port-forward fallback, keep it running and keep `INGRESS_ADDR=localhost:8080`
 
 ## Set cluster contexts
 In this workshop, you can use your preferred cluster context. To set it, run the following command, replacing cluster1 and cluster2 with your desired context name
@@ -21,7 +21,7 @@ export MESH_NAME_CLUSTER1=cluster1    # Recommended to keep as cluster1 for POC
 
 export KUBECONTEXT_CLUSTER2=cluster2  # Replace with your actual kubectl context name
 export MESH_NAME_CLUSTER2=cluster2    # Recommended to keep as cluster2 for POC
-[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 005 in this shell, or its port-forward fallback."
+[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
 ```
 
 ## Background
@@ -219,7 +219,7 @@ spec:
       mode: Passthrough
 ```
 
-> **Node IPs and NodePorts are read once.** If a listed peer node is replaced, or `svc/istio-eastwest` is recreated with new NodePorts, run the `apply_remote_peer` block again. Lab `012` detects both kinds of drift.
+> **Node IPs and NodePorts are read once.** If a listed peer node is replaced, or `svc/istio-eastwest` is recreated with new NodePorts, run the `apply_remote_peer` block again. Lab `013` detects both kinds of drift.
 
 ## Verify the peering
 
@@ -311,7 +311,7 @@ metadata:
 spec:
   parentRefs:
     - name: ingress
-      namespace: istio-system
+      namespace: agentgateway-system
   rules:
     - matches:
       - path:
@@ -359,17 +359,17 @@ Expected output:
    2 cluster2
 ```
 
-Tail logs of ztunnel on `cluster2` in a new terminal to watch the requests arrive
+Tail logs of ztunnel on `cluster2` in a new terminal to watch the connections arrive
 ```bash
 kubectl logs -n istio-system -l app=ztunnel --context $KUBECONTEXT_CLUSTER2 -f --prefix | grep "mesh.internal"
 ```
 
-Expected output (one line per request):
+Expected output (one line per connection, written when the connection closes):
 ```
-[pod/ztunnel-tkq6n/istio-proxy] 2026-10-12T16:20:45.471857Z	info	http access	request complete	src.addr=10.244.2.15:33008 src.workload="ingress-istio" src.namespace="istio-system" src.identity="spiffe://cluster1.local/ns/istio-system/sa/ingress-istio" dst.addr=10.244.2.2:15008 dst.hbone_addr=productpage.bookinfo-frontends.mesh.internal:9080 dst.service="productpage.bookinfo-frontends.mesh.internal" dst.workload="productpage-v1-59c74584cf-c928t" dst.namespace="bookinfo-frontends" dst.identity="spiffe://cluster2.local/ns/bookinfo-frontends/sa/bookinfo-productpage" direction="inbound" method=GET path="/productpage" protocol=HTTP1 response_code=200 host="172.30.0.3:32283" user_agent="curl/8.10.1" request_id="10f1a29f-d0e1-43dd-8332-2b10e57d44f8" duration="28ms"
+[pod/ztunnel-xh9gv/istio-proxy] 2026-10-13T19:09:16.931151Z	info	access	connection complete	src.addr=10.244.1.30:38350 src.workload="ingress" src.namespace="agentgateway-system" src.identity="spiffe://cluster1.local/ns/agentgateway-system/sa/ingress" dst.addr=10.244.1.18:15008 dst.hbone_addr=productpage.bookinfo-frontends.mesh.internal:9080 dst.service="productpage.bookinfo-frontends.mesh.internal" dst.workload="productpage-v1-59c74584cf-cx892" dst.namespace="bookinfo-frontends" dst.identity="spiffe://cluster2.local/ns/bookinfo-frontends/sa/bookinfo-productpage" direction="inbound" bytes_sent=9739 bytes_recv=119 duration="2314ms"
 ```
 
-In the log line, `src.identity` is the cluster1 ingress gateway (`cluster1.local` trust domain) and `dst.identity` is productpage in cluster2 (`cluster2.local`). The request crossed clusters over mTLS, and each side kept its own trust domain. `dst.service` is the global hostname `productpage.bookinfo-frontends.mesh.internal`.
+In the log line, `src.identity` is the agentgateway ingress gateway in cluster1 (`cluster1.local` trust domain) and `dst.identity` is productpage in cluster2 (`cluster2.local`). The request crossed clusters over mTLS, and each side kept its own trust domain. `dst.service` is the global hostname `productpage.bookinfo-frontends.mesh.internal`. agentgateway keeps its HBONE connection to productpage open across requests, so ztunnel logs one line per connection instead of one per request.
 
 ## Restore productpage on cluster1
 
@@ -398,4 +398,4 @@ At this point we have completed the following objectives
 - Reconfigured ingress to the global service hostname
 - Failed productpage over from cluster1 to cluster2 and back
 
-In the next step `007` we will lock down the mesh with identity-based policies in both clusters, and quarantine a workload
+In the next step `008` we will lock down the mesh with identity-based policies in both clusters, and quarantine a workload

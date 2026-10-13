@@ -2,7 +2,7 @@
 
 # Objectives
 - Deploy a namespace waypoint for `bookinfo-backends` in both clusters
-- Move the lab `007` identity rules onto the waypoint, so they keep working through the extra hop
+- Move the lab `008` identity rules onto the waypoint, so they keep working through the extra hop
 - Restrict `reviews` to `GET` requests with an L7 AuthorizationPolicy
 - Shift traffic between `reviews` versions by weight and by request header
 - Inject delays and aborts, and absorb a broken replica with retries
@@ -10,21 +10,21 @@
 ![](../images/waypoints-1.png)
 
 ## Prerequisites
-- This lab assumes you have completed setup from labs `000-007`
-- The lab `007` deny-all baseline and allow policies are in place in both clusters
+- This lab assumes you have completed setup from labs `000-008`
+- The lab `008` deny-all baseline and allow policies are in place in both clusters
 
 Ensure the following environment variables are set:
 ```bash
 export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context name
 export KUBECONTEXT_CLUSTER2=cluster2  # Replace with your actual kubectl context name
-[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 005 in this shell, or its port-forward fallback."
+[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
 ```
 
 ## Background
 
 ztunnel handles L4 for every enrolled workload: mTLS, identity and connection-level authorization. It does not parse HTTP, so it cannot match a method or a path, split requests by weight, or retry a failed request. A waypoint adds those L7 features. It is an Envoy proxy that you create with a Gateway API `Gateway` of class `istio-waypoint`, and it serves the namespaces or services that you label to use it.
 
-A waypoint is a destination-side proxy. Callers keep their direct ztunnel path to everything else, and only traffic to the labelled services takes the extra hop. Lab `009` measures what that hop costs.
+A waypoint is a destination-side proxy. Callers keep their direct ztunnel path to everything else, and only traffic to the labelled services takes the extra hop. Lab `010` measures what that hop costs.
 
 | Concern | Where it runs in this lab |
 |---|---|
@@ -32,7 +32,7 @@ A waypoint is a destination-side proxy. Callers keep their direct ztunnel path t
 | Identity rules for `bookinfo-backends` | The waypoint, which sees the original caller |
 | HTTP method rules, weighted routes, header routes, faults, retries | The waypoint |
 
-> **Why a waypoint in both clusters?** Waypoint configuration is per cluster, like the policies in lab `007`. If only cluster1 had the waypoint, the cluster2 backends would still enforce the lab `007` L4 rules, and an L7 rule such as "GET only" would apply in one cluster and not the other. Deploy the waypoint and its security policies in every cluster. Traffic experiments, such as the canary routes below, can stay in one cluster.
+> **Why a waypoint in both clusters?** Waypoint configuration is per cluster, like the policies in lab `008`. If only cluster1 had the waypoint, the cluster2 backends would still enforce the lab `008` L4 rules, and an L7 rule such as "GET only" would apply in one cluster and not the other. Deploy the waypoint and its security policies in every cluster. Traffic experiments, such as the canary routes below, can stay in one cluster.
 
 ## Deploy a Waypoint in Both Clusters
 
@@ -87,7 +87,7 @@ Expected output:
    1 Error fetching product reviews
 ```
 
-The waypoint changed the traffic path. productpage now connects to the waypoint, and the waypoint connects to the `details` pod. The ztunnel in front of `details` sees `bookinfo-backends/sa/waypoint` as the caller, and the lab `007` policies only allow `bookinfo-frontends/sa/bookinfo-productpage`. Every backend call is denied.
+The waypoint changed the traffic path. productpage now connects to the waypoint, and the waypoint connects to the `details` pod. The ztunnel in front of `details` sees `bookinfo-backends/sa/waypoint` as the caller, and the lab `008` policies only allow `bookinfo-frontends/sa/bookinfo-productpage`, so ztunnel denies every backend call.
 
 Split enforcement across the two hops. Read the file first, the comment at the top explains each part:
 ```bash
@@ -104,9 +104,9 @@ Expected output:
    2 cluster1
 ```
 
-The `selector` policies replace the lab `007` pod policies: now only the waypoint may deliver to a backend pod, which also stops a caller from connecting to a pod directly and skipping the waypoint. The `targetRefs` policies carry the identity rules and run on the waypoint, which terminates the caller's mTLS connection and reads the original identity.
+The `selector` policies replace the lab `008` pod policies: now only the waypoint may deliver to a backend pod, which also stops a caller from connecting to a pod directly and skipping the waypoint. The `targetRefs` policies carry the identity rules and run on the waypoint, which terminates the caller's mTLS connection and reads the original identity.
 
-> **Don't take the shortcut.** Adding `ns/bookinfo-backends/sa/waypoint` to the lab `007` policies also restores the page. It also makes every backend pod trust anything the waypoint forwards, so any workload in the mesh could reach any backend.
+> **Don't take the shortcut.** Adding `ns/bookinfo-backends/sa/waypoint` to the lab `008` policies restores the page too, but it makes every backend pod trust anything the waypoint forwards, so any workload in the mesh could reach any backend.
 
 Check that the rules still hold. `reviews` may call `ratings`, and only productpage may call `details`:
 ```bash
@@ -492,7 +492,7 @@ Expected output:
   20 200
 ```
 
-Every request succeeds. When an attempt hits the broken pod, the waypoint retries on another host, so callers never see the failure. A retry hides the broken replica from callers, so watch the waypoint's retry counters (lab `010`) to find out that a replica is broken.
+Every request succeeds. When an attempt hits the broken pod, the waypoint retries on another host, so callers never see the failure. Watch the waypoint's retry counters (lab `011`) to find the broken replica.
 
 ## Cleanup
 
@@ -514,9 +514,9 @@ for context in $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2; do
 done
 ```
 
-The waypoints and `auth-policy/waypoint-auth.yaml` stay in place for the rest of the workshop. Lab `009` measures the waypoint hop, and lab `017` upgrades the waypoints with the rest of the mesh.
+The waypoints and `auth-policy/waypoint-auth.yaml` stay in place for the rest of the workshop. Lab `010` measures the waypoint hop, and lab `018` upgrades the waypoints with the rest of the mesh.
 
-> **Removing the waypoints later?** Unlabel the namespace, delete the Gateway, and put the lab `007` pod policies back in each cluster. Callers return to the direct path, where the waypoint-only pod policies would deny them:
+> **Removing the waypoints later?** Unlabel the namespace, delete the Gateway, and put the lab `008` pod policies back in each cluster. Callers return to the direct path, where the waypoint-only pod policies would deny them:
 > ```bash
 > for context in $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2; do
 >   kubectl label namespace bookinfo-backends istio.io/use-waypoint- --context $context
@@ -530,9 +530,9 @@ The waypoints and `auth-policy/waypoint-auth.yaml` stay in place for the rest of
 ## Next Steps
 At this point we have completed the following objectives:
 - Deployed a namespace waypoint for `bookinfo-backends` in both clusters
-- Moved the lab `007` identity rules onto the waypoint, so they kept working through the extra hop
+- Moved the lab `008` identity rules onto the waypoint, so they kept working through the extra hop
 - Restricted `reviews` to `GET` requests with an L7 AuthorizationPolicy
 - Shifted traffic between `reviews` versions by weight and by request header
 - Injected delays and aborts, and absorbed a broken replica with retries
 
-In the next step `009` we will trace the east-west data path and measure each hop
+In the next step `010` we will trace the east-west data path and measure each hop

@@ -1,8 +1,8 @@
-# Lab 008: authorization for bookinfo-backends once the namespace uses a waypoint.
+# Lab 009: authorization for bookinfo-backends once the namespace uses a waypoint.
 #
 # The waypoint adds a hop. Callers connect to the waypoint, and the waypoint connects
 # to the pod, so ztunnel at the pod sees the waypoint's identity, not the original
-# caller. The selector policies from lab 007 stop matching and every backend call fails.
+# caller. The selector policies from lab 008 stop matching and every backend call fails.
 #
 # Enforcement is split across the two hops:
 #   * Pod level (selector): only the waypoint may deliver. This also stops a caller
@@ -10,7 +10,7 @@
 #   * Waypoint level (targetRefs): the identity rules. The waypoint terminates the
 #     caller's mTLS connection, so it sees the original caller.
 #
-# Do not add the waypoint identity to the lab 007 policies instead. That makes every
+# Do not add the waypoint identity to the lab 008 policies instead. That makes every
 # pod trust anything the waypoint forwards, so any mesh workload reaches any backend.
 #
 # Each cluster runs its own waypoint, so both trust domains are listed and the same

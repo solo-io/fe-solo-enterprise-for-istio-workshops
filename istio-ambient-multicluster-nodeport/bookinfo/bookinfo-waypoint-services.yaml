@@ -1,4 +1,4 @@
-# Additional Services used only in lab 010 (L7 Traffic Management with Waypoints).
+# Additional Services used only in lab 009 (waypoints).
 # Apply at the start of that lab and remove during cleanup.
 ---
 # Selects only reviews-v3 (red stars), the version engineering deemed most stable

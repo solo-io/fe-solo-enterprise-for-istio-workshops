@@ -7,8 +7,8 @@
 - Take a cluster out of the mesh and bring it back with a loop that works for any number of clusters
 
 ## Prerequisites
-- This lab assumes you have completed setup from labs `000-011`
-- The monitoring stack from lab `010` is running. This lab uses the cluster2 Prometheus agent as a cross-cluster client
+- This lab assumes you have completed setup from labs `000-012`
+- The monitoring stack from lab `011` is running. This lab uses the cluster2 Prometheus agent as a cross-cluster client
 
 Ensure the following environment variables are set:
 ```bash
@@ -18,7 +18,7 @@ export KUBECONTEXT_CLUSTER2=cluster2  # Replace with your actual kubectl context
 export MESH_NAME_CLUSTER2=cluster2    # Recommended to keep as cluster2 for POC
 ```
 
-Lab `006` points the peers at the control-plane nodes with `PEER_NODE_SELECTOR`. Set it again in this shell, so the repair steps below use the same nodes. If you unset it in lab `006`, skip the `export` line:
+Lab `007` points the peers at the control-plane nodes with `PEER_NODE_SELECTOR`. Set it again in this shell, so the repair steps below use the same nodes. If you unset it in lab `007`, skip the `export` line:
 ```bash
 export PEER_NODE_SELECTOR=node-role.kubernetes.io/control-plane
 echo "PEER_NODE_SELECTOR=${PEER_NODE_SELECTOR:-<unset: peers use the nodes that run an istio-eastwest pod>}"
@@ -26,7 +26,7 @@ echo "PEER_NODE_SELECTOR=${PEER_NODE_SELECTOR:-<unset: peers use the nodes that 
 
 ## Background
 
-Each `istio-remote-peer-<peer>` Gateway is a copy of facts about the peer cluster, taken when you ran `apply_remote_peer` in lab `006`:
+Each `istio-remote-peer-<peer>` Gateway is a copy of facts about the peer cluster, taken when you ran `apply_remote_peer` in lab `007`:
 
 | Field in the remote-peer Gateway | Copied from the peer cluster | Changes when |
 |---|---|---|
@@ -72,7 +72,7 @@ OK     cluster1/istio-remote-peer-cluster2: 172.30.0.4 ports 31213/32512
 OK     cluster2/istio-remote-peer-cluster1: 172.30.0.2 ports 31892/30897
 ```
 
-Define a probe for the cluster2 to cluster1 direction. The cluster2 Prometheus agent calls the central Prometheus in cluster1 through its global hostname, and `prometheus-auth` from lab `010` allows it:
+Define a probe for the cluster2 to cluster1 direction. The cluster2 Prometheus agent calls the central Prometheus in cluster1 through its global hostname, and `prometheus-auth` from lab `011` allows it:
 ```bash
 probe_cluster2_to_cluster1() {
   kubectl exec deploy/prometheus -n monitoring --context $KUBECONTEXT_CLUSTER2 -- \
@@ -155,7 +155,7 @@ Both planes fail in the cluster2 to cluster1 direction. The data plane resets th
 
 ## Repair the Peering
 
-The fix is the `apply_remote_peer` function from lab `006`, run for the direction that drifted. The function is repeated here so this lab works in a new shell:
+The fix is the `apply_remote_peer` function from lab `007`, run for the direction that drifted. The function is repeated here so this lab works in a new shell:
 ```bash
 apply_remote_peer() {
   local LOCAL_CTX=$1 PEER_CTX=$2 PEER_MESH=$3 HBONE_PORT XDS_PORT PEER_IPS PEER_ADDRESSES
@@ -288,11 +288,11 @@ OK     cluster2/istio-remote-peer-cluster1: 172.30.0.2 ports 31958/32508
 
 > **Choose the NodePorts per site in production.** Pick fixed values for HBONE and xDS, write them into the ConfigMap in the install pipeline before the first peering, and open exactly those two ports in firewalls and security groups. Every cluster can use the same two numbers, because each cluster's NodePort range is separate. A pinned port fails to apply if another Service in the cluster already holds it, so reserve the two values for the east-west gateway.
 
-Pinning removes port drift. Address drift remains: a listed node can still be replaced. The control-plane default from lab `006` lowers how often that happens, and the drift check reports it when it does.
+Pinning removes port drift. Address drift remains: a listed node can still be replaced. The control-plane default from lab `007` lowers how often that happens, and the drift check reports it when it does.
 
 ## Take a Cluster Out and Bring It Back
 
-Rebuilding, decommissioning or isolating a cluster starts with unpeering it. First move traffic off it, the same way lab `011` moved a hostname. Then delete the remote-peer Gateways on both sides. Check the global services in cluster1 before and after:
+Rebuilding, decommissioning or isolating a cluster starts with unpeering it. First move traffic off it, the same way lab `012` moved a hostname. Then delete the remote-peer Gateways on both sides. Check the global services in cluster1 before and after:
 ```bash
 ./solo-istioctl zc services -n istio-system --context $KUBECONTEXT_CLUSTER1 | grep -E "NAMESPACE|autogen"
 kubectl delete gateway istio-remote-peer-$MESH_NAME_CLUSTER2 -n istio-gateways --context $KUBECONTEXT_CLUSTER1
@@ -320,7 +320,7 @@ wget: bad address 'prometheus.monitoring.mesh.internal:9090'
 
 The global productpage in cluster1 dropped from two endpoints to one, so it no longer has a failover target. cluster2 lost `prometheus.monitoring.mesh.internal` completely, because that service runs only in cluster1. Before you unpeer a cluster, list the global services that exist only on one side: their callers on the other side lose them.
 
-Bring the cluster back. The loop below applies a remote-peer Gateway for every ordered pair of clusters. With two clusters it applies two Gateways. Each list entry is `<kubectl context>=<mesh name>`. A new third cluster, installed with labs `002` and `003`, joins by adding one entry: the loop then applies the four new Gateways it needs, and re-applies the existing two with the same values. Lab `018` adds two clusters this way:
+Bring the cluster back. The loop below applies a remote-peer Gateway for every ordered pair of clusters. With two clusters it applies two Gateways. Each list entry is `<kubectl context>=<mesh name>`. A new third cluster, installed with labs `002` and `003`, joins by adding one entry: the loop then applies the four new Gateways it needs, and re-applies the existing two with the same values. Lab `019` adds two clusters this way:
 ```bash
 ALL_CLUSTERS=("$KUBECONTEXT_CLUSTER1=$MESH_NAME_CLUSTER1" "$KUBECONTEXT_CLUSTER2=$MESH_NAME_CLUSTER2")
 for local in "${ALL_CLUSTERS[@]}"; do
@@ -358,11 +358,11 @@ productpage is back to two endpoints, and the agent in cluster2 reaches cluster1
 | A cluster joins | No peering yet | Add it to `ALL_CLUSTERS`, then run the all-pairs loop |
 | A cluster leaves | Its global services disappear for the other clusters | Move traffic off it, then delete its remote-peer Gateways on every side |
 
-> **Upgrades.** An istiod upgrade or a ztunnel rollout re-establishes every peering connection, which is exactly the moment that hidden drift turns into an outage. Run `check_peer_drift` for every pair before you start, as lab `017` does.
+> **Upgrades.** An istiod upgrade or a ztunnel rollout re-establishes every peering connection, and each connection to a drifted address or port fails at that point. Run `check_peer_drift` for every pair before you start, as lab `018` does.
 
 ## Cleanup
 
-No cleanup is needed. The NodePort pins and the repaired peering stay in place: the pins keep the east-west NodePorts fixed for the rest of the workshop, and lab `019` deletes them with the `istio-gateways` namespace.
+No cleanup is needed. The NodePort pins and the repaired peering stay in place: the pins keep the east-west NodePorts fixed for the rest of the workshop, and lab `020` deletes them with the `istio-gateways` namespace.
 
 ## Next Steps
 At this point we have completed the following objectives:
@@ -371,4 +371,4 @@ At this point we have completed the following objectives:
 - Repaired the peering, then pinned the NodePorts so a recreated Service keeps them
 - Took a cluster out of the mesh and brought it back with a loop that works for any number of clusters
 
-In the next step `013` we will serve per-hostname certificates from cert-manager on the ingress gateway
+In the next step `014` we will serve per-hostname certificates from cert-manager on the ingress gateway

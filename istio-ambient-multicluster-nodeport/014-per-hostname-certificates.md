@@ -8,8 +8,8 @@
 - Rotate a certificate and confirm the gateway serves the new one without a restart
 
 ## Prerequisites
-- This lab assumes you have completed setup from labs `000-012`
-- The ingress gateway address from lab `005` serves port `443`. With a LoadBalancer Service that is automatic. With the NodePort or port-forward fallback, use the `443` NodePort or forward `8443:443` and replace `$INGRESS_IP:443` below
+- This lab assumes you have completed setup from labs `000-013`
+- The ingress gateway address from lab `006` serves port `443`. With a LoadBalancer Service that is automatic. With the NodePort or port-forward fallback, use the `443` NodePort or forward `8443:443` and replace `$INGRESS_IP:443` below
 
 Ensure the following environment variables are set:
 ```bash
@@ -23,7 +23,7 @@ echo "INGRESS_IP=$INGRESS_IP"
 
 A wildcard certificate covers every hostname under a domain with one key. If that key leaks, every hostname is exposed, and every team that serves one of those hostnames shares the same renewal. A certificate per hostname limits each key to one hostname, and cert-manager makes the extra certificates cheap to run.
 
-Istio's ingress gateway reads TLS certificates from Kubernetes Secrets named in each listener's `certificateRefs`. cert-manager's Gateway API support fills those Secrets:
+agentgateway reads TLS certificates from Kubernetes Secrets named in each listener's `certificateRefs`, in the Gateway's namespace. cert-manager's Gateway API support fills those Secrets:
 
 | Resource | Role |
 |---|---|
@@ -31,7 +31,7 @@ Istio's ingress gateway reads TLS certificates from Kubernetes Secrets named in 
 | Annotations on the `Gateway` | `cert-manager.io/cluster-issuer` names the issuer. `cert-manager.io/private-key-algorithm` and `cert-manager.io/private-key-size` set ECDSA P-256 for every certificate cert-manager creates for this Gateway |
 | One HTTPS listener per hostname | cert-manager creates one `Certificate` per listener, with that listener's `hostname` as the only SAN, stored in the Secret that `certificateRefs` names |
 
-The gateway gets certificates through Istio's secret discovery, so a renewed Secret reaches Envoy without a pod restart.
+The agentgateway controller watches those Secrets and pushes a renewed certificate to the gateway pods over its configuration stream, and the running pods serve it.
 
 ## Install cert-manager
 
@@ -122,15 +122,18 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: ingress
-  namespace: istio-system
+  namespace: agentgateway-system
   annotations:
-    # Change to NodePort if your cluster has no LoadBalancer integration
-    networking.istio.io/service-type: LoadBalancer
     cert-manager.io/cluster-issuer: internal-pki
     cert-manager.io/private-key-algorithm: ECDSA
     cert-manager.io/private-key-size: "256"
 spec:
-  gatewayClassName: istio
+  gatewayClassName: enterprise-agentgateway
+  infrastructure:
+    parametersRef:
+      group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayParameters
+      name: ingress-config
   listeners:
   - name: http
     port: 80
@@ -162,10 +165,10 @@ spec:
         from: All
 EOF
 kubectl wait --for=condition=Ready certificate/bookinfo-example-com-tls certificate/shop-example-com-tls \
-  -n istio-system --timeout=90s --context $KUBECONTEXT_CLUSTER1
-kubectl get certificate -n istio-system --context $KUBECONTEXT_CLUSTER1
-kubectl rollout status deploy/ingress-istio -n istio-system --watch --timeout=90s --context $KUBECONTEXT_CLUSTER1
-kubectl get svc ingress-istio -n istio-system --context $KUBECONTEXT_CLUSTER1
+  -n agentgateway-system --timeout=90s --context $KUBECONTEXT_CLUSTER1
+kubectl get certificate -n agentgateway-system --context $KUBECONTEXT_CLUSTER1
+kubectl rollout status deploy/ingress -n agentgateway-system --watch --timeout=90s --context $KUBECONTEXT_CLUSTER1
+kubectl get svc ingress -n agentgateway-system --context $KUBECONTEXT_CLUSTER1
 ```
 
 Expected output:
@@ -173,14 +176,14 @@ Expected output:
 certificate.cert-manager.io/bookinfo-example-com-tls condition met
 certificate.cert-manager.io/shop-example-com-tls condition met
 NAME                       READY   SECRET                     AGE
-bookinfo-example-com-tls   True    bookinfo-example-com-tls   10s
-shop-example-com-tls       True    shop-example-com-tls       10s
-deployment "ingress-istio" successfully rolled out
-NAME            TYPE           CLUSTER-IP       EXTERNAL-IP      PORT(S)                                      AGE
-ingress-istio   LoadBalancer   10.103.147.190   172.30.255.254   15021:30194/TCP,80:30583/TCP,443:32565/TCP   6h48m
+bookinfo-example-com-tls   True    bookinfo-example-com-tls   0s
+shop-example-com-tls       True    shop-example-com-tls       0s
+deployment "ingress" successfully rolled out
+NAME      TYPE           CLUSTER-IP      EXTERNAL-IP      PORT(S)                      AGE
+ingress   LoadBalancer   10.111.90.138   172.30.255.254   80:31519/TCP,443:30819/TCP   42m
 ```
 
-cert-manager created one `Certificate` per HTTPS listener, named after the Secret in `certificateRefs`. The `bookinfo-route` from lab `006` has no `hostnames` and no `sectionName`, so it attaches to every listener, including the two new ones.
+cert-manager created one `Certificate` per HTTPS listener, named after the Secret in `certificateRefs`. The `bookinfo-route` from lab `007` has no `hostnames` and no `sectionName`, so it attaches to every listener, including the two new ones.
 
 ## Verify Each Hostname
 
@@ -227,7 +230,7 @@ curl -s --cacert internal-root-ca.pem --resolve other.example.com:443:$INGRESS_I
 
 Expected output (the exact error text depends on your curl build):
 ```
-000 LibreSSL SSL_connect: SSL_ERROR_SYSCALL in connection to other.example.com:443
+000 TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
 ```
 
 The gateway closes the handshake, because no listener matches the SNI. It has no default certificate to fall back to, so a mistyped or retired hostname cannot pick up another hostname's certificate.
@@ -243,13 +246,13 @@ serial() {
     | openssl x509 -noout -serial
 }
 gateway_restarts() {
-  kubectl get pod -n istio-system -l gateway.networking.k8s.io/gateway-name=ingress --context $KUBECONTEXT_CLUSTER1 \
+  kubectl get pod -n agentgateway-system -l gateway.networking.k8s.io/gateway-name=ingress --context $KUBECONTEXT_CLUSTER1 \
     -o jsonpath='{.items[0].metadata.name} restarts={.items[0].status.containerStatuses[0].restartCount}{"\n"}'
 }
 serial bookinfo.example.com
 gateway_restarts
-kubectl delete secret bookinfo-example-com-tls -n istio-system --context $KUBECONTEXT_CLUSTER1
-kubectl wait --for=condition=Ready certificate/bookinfo-example-com-tls -n istio-system --timeout=60s --context $KUBECONTEXT_CLUSTER1
+kubectl delete secret bookinfo-example-com-tls -n agentgateway-system --context $KUBECONTEXT_CLUSTER1
+kubectl wait --for=condition=Ready certificate/bookinfo-example-com-tls -n agentgateway-system --timeout=60s --context $KUBECONTEXT_CLUSTER1
 sleep 5
 serial bookinfo.example.com
 gateway_restarts
@@ -257,12 +260,12 @@ gateway_restarts
 
 Expected output:
 ```
-serial=2B99647E75CC14AD922B0B989CFFF97CDA26921F
-ingress-istio-75f96d4db5-dndml restarts=0
-secret "bookinfo-example-com-tls" deleted from istio-system namespace
+serial=44F1D6EB56FE8B7984BCC460C2E4C384B67EFC1C
+ingress-55cd48866f-8bgcj restarts=0
+secret "bookinfo-example-com-tls" deleted from agentgateway-system namespace
 certificate.cert-manager.io/bookinfo-example-com-tls condition met
-serial=5273C34BA00B9ADB8CF4F108A9047D994FD4D260
-ingress-istio-75f96d4db5-dndml restarts=0
+serial=06038DF7BBA5D3FFD412F5E3A4002BD543411E5C
+ingress-55cd48866f-8bgcj restarts=0
 ```
 
 The gateway serves the new serial from the same pod, with no restart. Scheduled renewals take the same path: by default cert-manager renews a certificate when two thirds of its 90-day lifetime has passed.
@@ -278,12 +281,14 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: ingress
-  namespace: istio-system
-  annotations:
-    # Change to NodePort if your cluster has no LoadBalancer integration
-    networking.istio.io/service-type: LoadBalancer
+  namespace: agentgateway-system
 spec:
-  gatewayClassName: istio
+  gatewayClassName: enterprise-agentgateway
+  infrastructure:
+    parametersRef:
+      group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayParameters
+      name: ingress-config
   listeners:
   - name: http
     port: 80
@@ -292,15 +297,15 @@ spec:
       namespaces:
         from: All
 EOF
-kubectl delete certificate bookinfo-example-com-tls shop-example-com-tls -n istio-system --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
-kubectl delete secret bookinfo-example-com-tls shop-example-com-tls -n istio-system --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
+kubectl delete certificate bookinfo-example-com-tls shop-example-com-tls -n agentgateway-system --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
+kubectl delete secret bookinfo-example-com-tls shop-example-com-tls -n agentgateway-system --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
 kubectl delete clusterissuer internal-pki selfsigned-bootstrap --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
 kubectl delete certificate internal-root-ca -n cert-manager --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
 kubectl delete secret internal-root-ca -n cert-manager --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
 rm -f internal-root-ca.pem
 ```
 
-Uninstall cert-manager. The CRDs stay, because removing a CRD deletes every resource of that kind. Lab `019` removes them:
+Uninstall cert-manager. The CRDs stay, because removing a CRD deletes every resource of that kind. Lab `020` removes them:
 ```bash
 helm uninstall cert-manager -n cert-manager --kube-context $KUBECONTEXT_CLUSTER1 --ignore-not-found
 kubectl delete namespace cert-manager --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
@@ -314,4 +319,4 @@ At this point we have completed the following objectives:
 - Verified the certificate that each hostname serves, and that an unknown hostname gets none
 - Rotated a certificate and confirmed the gateway served the new one without a restart
 
-In the next step `014` we will carry the real client IP through the ingress gateway and across clusters
+In the next step `015` we will carry the real client IP through the ingress gateway and across clusters

@@ -1,4 +1,4 @@
-# Lab 010: Grafana in cluster1, reading the central Prometheus.
+# Lab 011: Grafana in cluster1, reading the central Prometheus.
 # Workshop only: anonymous viewers are allowed and the admin password is "admin".
 # Use your identity provider and a stored secret in production.
 apiVersion: v1

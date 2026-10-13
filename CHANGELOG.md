@@ -1,5 +1,13 @@
 # Changelog
 
+0.0.4 - (10-13-26)
+---
+- Add `istio-ambient-multicluster-nodeport/005-install-agentgateway-as-an-ingress-gw.md`: install Solo Enterprise for agentgateway `v2026.9.3` on cluster1 with its Istio integration 
+- Update `istio-ambient-multicluster-nodeport` to use agentgateway as the ingress gateway in every lab
+- Move labs `005`-`019` to `006`-`020` in `istio-ambient-multicluster-nodeport`, with every lab-number reference and asset comment updated
+- Add `images/expose-bookinfo-agentgateway-1.png` and `images/multicluster-global-mesh-agentgateway-1.png`
+- Update `istio-ambient-multicluster-nodeport` `README.md`, `000-introduction.md`, `000-tools.md` (lab numbers) and `000-prerequisites.md`
+
 0.0.3 - (10-13-26)
 ---
 - Add 12 labs to `istio-ambient-multicluster-nodeport`, each validated on vind with Istio `1.28.10-patch0-solo`:

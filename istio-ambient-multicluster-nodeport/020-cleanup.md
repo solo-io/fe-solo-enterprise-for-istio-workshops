@@ -1,6 +1,6 @@
 ## Cleanup
 
-Uninstall Istio, the Bookinfo application and everything the add-on labs created on `cluster1` and `cluster2`, and on `cluster3` and `cluster4` if you ran lab `018`. Set the contexts first
+Uninstall Istio, the Bookinfo application and everything the add-on labs created on `cluster1` and `cluster2`, and on `cluster3` and `cluster4` if you ran lab `019`. Set the contexts first
 
 ```bash
 export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context name
@@ -9,14 +9,14 @@ export KUBECONTEXT_CLUSTER2=cluster2  # Replace with your actual kubectl context
 export CLUSTERS=($KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2)
 ```
 
-If you ran lab `018`, add its two clusters to the list
+If you ran lab `019`, add its two clusters to the list
 ```bash
 export KUBECONTEXT_CLUSTER3=cluster3  # Replace with your actual kubectl context name
 export KUBECONTEXT_CLUSTER4=cluster4  # Replace with your actual kubectl context name
 CLUSTERS+=($KUBECONTEXT_CLUSTER3 $KUBECONTEXT_CLUSTER4)
 ```
 
-## Add-on labs (labs `007`-`018`)
+## Add-on labs (labs `008`-`019`)
 
 Each add-on lab removes its own resources in its `## Cleanup` section. The loop below removes anything left over, for example after a lab you stopped partway through. Every delete uses `--ignore-not-found`, so the loop is safe to run when a lab already cleaned up:
 
@@ -24,32 +24,47 @@ Each add-on lab removes its own resources in its `## Cleanup` section. The loop 
 for CONTEXT in "${CLUSTERS[@]}"; do
   echo "Cleaning up add-on labs in $CONTEXT..."
 
-  # Namespaces: tenant-a (007), perf (009), monitoring (010), cert-manager (013),
-  # client-ip and outside (014), egress and partner (015), grpc-echo (016)
-  kubectl delete namespace tenant-a perf monitoring cert-manager client-ip outside egress partner grpc-echo \
+  # Namespaces: tenant-a (008), perf (010), monitoring (011), cert-manager (014),
+  # client-ip and outside (015), egress and partner (016), grpc-echo and api-echo (017)
+  kubectl delete namespace tenant-a perf monitoring cert-manager client-ip outside egress partner grpc-echo api-echo \
     --context $CONTEXT --ignore-not-found
 
-  # Prometheus RBAC (010)
+  # Prometheus RBAC (011)
   kubectl delete clusterrolebinding prometheus-mesh --context $CONTEXT --ignore-not-found
   kubectl delete clusterrole prometheus-mesh --context $CONTEXT --ignore-not-found
 
-  # Egress node label (015)
+  # Egress node label (016)
   kubectl label node -l egress-node=true egress-node- --context $CONTEXT
 
-  # Probe pods in the default namespace (015, 018)
+  # Probe pods in the default namespace (016, 019)
   kubectl delete pod egress-probe reach-probe -n default --context $CONTEXT --ignore-not-found
 done
 
-# cert-manager release (013), if the lab was stopped before its cleanup
+# cert-manager release (014), if the lab was stopped before its cleanup
 helm uninstall cert-manager -n cert-manager --kube-context $KUBECONTEXT_CLUSTER1 --ignore-not-found
 ```
 
-The `ingress-edge` Gateway and its ConfigMap (lab `014`), the NodePort pins (labs `012` and `018`), the waypoints (lab `008`) and every `AuthorizationPolicy` and `PeerAuthentication` (labs `007`, `008`, `010`) live in namespaces that the next section deletes.
+The `ingress-edge` Gateway, its parameters and policy (lab `015`) live in `agentgateway-system`, which the agentgateway section deletes. The rewrite policy from lab `017` lives in `api-echo`, which the loop above deletes. The NodePort pins (labs `013` and `019`), the waypoints (lab `009`) and every `AuthorizationPolicy` and `PeerAuthentication` (labs `008`, `009`, `011`) live in namespaces that the Istio section deletes.
 
-## Istio, gateways and Bookinfo (labs `001`-`006`)
+## Agentgateway (lab `005`)
+
+Delete the agentgateway Gateways first, so the controller removes their deployments and Services, then uninstall both charts and delete the namespace:
+```bash
+for CONTEXT in "${CLUSTERS[@]}"; do
+  echo "Cleaning up agentgateway in $CONTEXT..."
+  if kubectl get crd gateways.gateway.networking.k8s.io --context $CONTEXT &>/dev/null; then
+    kubectl delete gateways -n agentgateway-system --all --context $CONTEXT --ignore-not-found
+  fi
+  helm uninstall enterprise-agentgateway -n agentgateway-system --kube-context $CONTEXT --ignore-not-found
+  helm uninstall enterprise-agentgateway-crds -n agentgateway-system --kube-context $CONTEXT --ignore-not-found
+  kubectl delete namespace agentgateway-system --context $CONTEXT --ignore-not-found
+done
+```
+
+## Istio, gateways and Bookinfo (labs `001`-`007`)
 
 The loop below removes every namespace, gateway and Helm release the core labs create. Deleting the
-Gateways first removes the ingress and east-west gateway deployments and their Services, and
+Gateways first removes the east-west gateway deployments and their Services, and
 the remote-peer Gateways end the peering. The `kubectl get crd` guard keeps the loop safe to rerun after
 you remove the CRDs below: `--ignore-not-found` forgives a missing resource but still errors on a
 missing CRD.
@@ -58,7 +73,7 @@ missing CRD.
 for CONTEXT in "${CLUSTERS[@]}"; do
   echo "Cleaning up $CONTEXT..."
 
-  # Routes and gateways (labs 005, 006, 008, 014, 018)
+  # Routes and gateways (labs 006, 007, 009, 019)
   if kubectl get crd gateways.gateway.networking.k8s.io --context $CONTEXT &>/dev/null; then
     kubectl delete httproute,grpcroute -n bookinfo-frontends --all --context $CONTEXT --ignore-not-found
     kubectl delete gateways -n bookinfo-backends --all --context $CONTEXT --ignore-not-found
@@ -72,7 +87,7 @@ for CONTEXT in "${CLUSTERS[@]}"; do
   helm uninstall istio-cni -n istio-system --kube-context $CONTEXT --ignore-not-found
   helm uninstall istio-base -n istio-system --kube-context $CONTEXT --ignore-not-found
 
-  # Namespaces: bookinfo (lab 001), istio-system (labs 002 and 003), istio-gateways (lab 006)
+  # Namespaces: bookinfo (lab 001), istio-system (labs 002 and 003), istio-gateways (lab 007)
   kubectl delete ns bookinfo-frontends bookinfo-backends istio-gateways istio-system \
     --context $CONTEXT --ignore-not-found
 done
@@ -83,7 +98,7 @@ Confirm nothing is left:
 ```bash
 for CONTEXT in "${CLUSTERS[@]}"; do
   echo "--- $CONTEXT ---"
-  kubectl get ns --context $CONTEXT --no-headers | grep -E "bookinfo|istio|tenant-a|perf|monitoring|cert-manager|client-ip|outside|egress|partner|grpc-echo"
+  kubectl get ns --context $CONTEXT --no-headers | grep -E "bookinfo|istio|agentgateway|tenant-a|perf|monitoring|cert-manager|client-ip|outside|egress|partner|grpc-echo|api-echo"
   helm list -A --kube-context $CONTEXT -q
 done
 ```
@@ -92,21 +107,21 @@ Both commands should print only the `--- <context> ---` lines.
 
 ## CRDs
 
-`helm uninstall istio-base` leaves the Istio and Gateway API CRDs in place, and `helm uninstall cert-manager` (lab `013`) leaves the cert-manager CRDs. This is deliberate: removing
+`helm uninstall istio-base` leaves the Istio and Gateway API CRDs in place, and `helm uninstall cert-manager` (lab `014`) leaves the cert-manager CRDs. `helm uninstall enterprise-agentgateway-crds` already removed the agentgateway CRDs. This is deliberate: removing
 a CRD deletes every custom resource of that kind across the cluster. Leave them if you plan to reinstall.
 To remove them on a cluster you are done with:
 
 ```bash
 for CONTEXT in "${CLUSTERS[@]}"; do
   kubectl get crd --context $CONTEXT -o name \
-    | grep -E "istio\.io|gateway\.networking\.k8s\.io|cert-manager\.io" \
+    | grep -E "istio\.io|solo\.io|gateway\.networking\.k8s\.io|cert-manager\.io|agentgateway\.dev" \
     | xargs -r kubectl delete --context $CONTEXT
 done
 ```
 
 ## Local files
 
-Lab `002` writes two files into this directory, and labs `011`, `013`, `016` and `017` write files that their own cleanup removes. Remove all of them once you are finished:
+Lab `002` writes two files into this directory, and labs `012`, `014`, `017` and `018` write files that their own cleanup removes. Remove all of them once you are finished:
 
 ```bash
 rm -f shared-root-trust-secret.yaml solo-istioctl

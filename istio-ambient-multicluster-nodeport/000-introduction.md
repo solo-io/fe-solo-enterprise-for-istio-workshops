@@ -5,7 +5,7 @@
 - Deploy sample microservices on two different namespaces (bookinfo app)
 - Install Istio Ambient Mesh
 - Enable Ambient Mesh for app namespaces (bookinfo-frontends and bookinfo-backends)
-- Setup Ingress Gateway to access the bookinfo frontend (productpage)
+- Install Solo Enterprise for agentgateway as the ingress gateway, integrated with the ambient mesh, to reach the bookinfo frontend (productpage)
 - Peer the two clusters through NodePort east-west gateways, with no LoadBalancer
 - Configure a globally available service using labels (productpage)
 - Reconfigure ingress to global service hostname (*.<namespace>.mesh.internal)
@@ -24,7 +24,7 @@
 
 # Use Cases
 - Zero Trust (mTLS)
-- Ingress
+- Ingress with agentgateway
 - Multi-cluster routing
 - Global service discovery
 - High Availability
@@ -46,15 +46,20 @@
 
 This workshop follows Solo's multi-cluster NodePort reference architecture ([`solo-reference-architectures/Ambient_Mesh/multi-cluster-nodeport`](https://github.com/solo-io/solo-reference-architectures/tree/main/Ambient_Mesh/multi-cluster-nodeport), Solo access required). Each cluster exposes its east-west gateway as a `NodePort` Service. Each cluster's remote-peer Gateway points at the other cluster's node InternalIPs and at the NodePorts for HBONE (`15008`) and xDS (`15012`). The design fits on-premises and private networks where the nodes of both clusters reach each other directly.
 
+## Ingress
+
+Solo Enterprise for agentgateway is the ingress gateway. It joins the mesh through its Istio integration, so it calls workloads over HBONE with its own SPIFFE identity, and it routes to the global `*.mesh.internal` hostnames. Lab `017` migrates ingress-nginx objects onto it. East-west traffic and waypoints stay on Istio.
+
 ## Validated on
 - Kubernetes ≥ 1.29
 - Istio 1.28.10-patch0-solo
+- Solo Enterprise for agentgateway v2026.9.3, on Gateway API v1.4.1
 - vind on Docker Desktop (arm64): two clusters with two nodes each, peered over NodePorts, for every lab
-- vind on Docker Desktop (arm64): four clusters with two nodes each for lab `018`
-- Istio 1.29.7-patch0-solo as the upgrade target in lab `017`
+- vind on Docker Desktop (arm64): four clusters with two nodes each for lab `019`
+- Istio 1.29.7-patch0-solo as the upgrade target in lab `018`
 
 # High Level Architecture Diagram
-![](../images/multicluster-global-mesh-2.png)
+![](../images/multicluster-global-mesh-agentgateway-1.png)
 
 ## License Key Details
 This workshop requires a Solo Trial License Key, exported as `SOLO_TRIAL_LICENSE_KEY` in lab `002`.
