@@ -1,0 +1,24 @@
+# Lab 016: a gRPC service behind ingress-nginx, with TLS to the backend and a client
+# certificate for backend mTLS.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: echo-grpc
+  namespace: grpc-echo
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: GRPCS
+    nginx.ingress.kubernetes.io/proxy-ssl-secret: grpc-echo/backend-client-cert
+    nginx.ingress.kubernetes.io/proxy-ssl-verify: "on"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: grpc.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: echo
+            port:
+              number: 7070

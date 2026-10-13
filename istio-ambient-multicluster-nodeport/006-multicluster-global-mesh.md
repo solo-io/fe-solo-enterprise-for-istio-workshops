@@ -92,7 +92,26 @@ Each cluster now has a NodePort for HBONE (`15008`) and one for xDS (`15012`). I
 
 ## Peer the clusters over NodePort
 
-The function below applies the `istio-remote-peer-<peer>` Gateway for one direction. Its addresses are the InternalIPs of the peer nodes that host a running `istio-eastwest` pod, skipping pods still terminating after a rollout. Set `PEER_NODE_SELECTOR` to use the nodes that match that label selector instead (see the production note after the block). The Gateway name, trust domain and network come from the peer's mesh name, not from its kubectl context.
+A remote-peer Gateway holds node IPs, so it goes stale when a listed node is replaced. This workshop points each peer at the other cluster's control-plane nodes. The east-west gateway pods stay on the workers. kube-proxy on each control-plane node forwards the NodePort traffic to a gateway pod in the same cluster, like an L3 proxy. This works because `svc/istio-eastwest` uses `externalTrafficPolicy: Cluster`, the default. With `Local`, a node without a gateway pod drops the traffic. Check the policy in each cluster:
+```bash
+kubectl get svc istio-eastwest -n istio-gateways --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.spec.externalTrafficPolicy}{"\n"}'
+kubectl get svc istio-eastwest -n istio-gateways --context $KUBECONTEXT_CLUSTER2 -o jsonpath='{.spec.externalTrafficPolicy}{"\n"}'
+```
+
+Expected output:
+```
+Cluster
+Cluster
+```
+
+Select the control-plane nodes as the peer addresses. The nodes of each cluster must reach the other cluster's control-plane nodes on the NodePort range:
+```bash
+export PEER_NODE_SELECTOR=node-role.kubernetes.io/control-plane
+```
+
+> **Note:** Peering with `PEER_NODE_SELECTOR` set has proven more stable in deployments of this NodePort architecture, because control-plane node IPs change less often than worker IPs. An east-west gateway rollout that moves the pod to another node also leaves the peer addresses valid.
+
+The function below applies the `istio-remote-peer-<peer>` Gateway for one direction. Its addresses are the InternalIPs of the peer nodes that match `PEER_NODE_SELECTOR`. The Gateway name, trust domain and network come from the peer's mesh name, not from its kubectl context.
 
 ```bash
 apply_remote_peer() {
@@ -153,18 +172,12 @@ apply_remote_peer $KUBECONTEXT_CLUSTER2 $KUBECONTEXT_CLUSTER1 $MESH_NAME_CLUSTER
 
 The block is safe to run again. A second run updates the Gateways in place.
 
-> **Production option: point the peers at the control-plane nodes.** The peer Gateways hold node IPs, so they go stale when the listed nodes are replaced. Control-plane nodes are replaced less often than workers and keep their IPs longer, so production clusters often list the control-plane IPs instead. The east-west gateway pods stay on the workers. kube-proxy on each control-plane node forwards the NodePort traffic to a gateway pod in the same cluster, like an L3 proxy. This works because `svc/istio-eastwest` uses `externalTrafficPolicy: Cluster`, the default. With `Local`, a node without a gateway pod drops the traffic. Check the policy in each cluster:
+> **Control-plane nodes out of reach?** On managed Kubernetes such as EKS, GKE and AKS, the control-plane nodes are missing from the node list, so the selector matches nothing and `apply_remote_peer` stops with `No istio-eastwest NodePorts or peer node addresses found`. The same applies when a firewall closes the NodePort range on the control-plane nodes. Unset the selector and run the two `apply_remote_peer` lines again. The peer addresses then default to the nodes that host a running `istio-eastwest` pod, skipping pods still terminating after a rollout. kube-proxy delivers to a gateway pod on the same node, so the extra node hop goes away. Those addresses change when the pod moves to another node, so run the two lines again after each east-west gateway rollout:
 > ```bash
-> kubectl get svc istio-eastwest -n istio-gateways --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.spec.externalTrafficPolicy}{"\n"}'
-> kubectl get svc istio-eastwest -n istio-gateways --context $KUBECONTEXT_CLUSTER2 -o jsonpath='{.spec.externalTrafficPolicy}{"\n"}'
-> ```
-> Then set the selector and run the two `apply_remote_peer` lines again. The peer cluster must reach the control-plane nodes on the NodePort range:
-> ```bash
-> export PEER_NODE_SELECTOR=node-role.kubernetes.io/control-plane
+> unset PEER_NODE_SELECTOR
 > apply_remote_peer $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2 $MESH_NAME_CLUSTER2
 > apply_remote_peer $KUBECONTEXT_CLUSTER2 $KUBECONTEXT_CLUSTER1 $MESH_NAME_CLUSTER1
 > ```
-> To go back to the nodes that run a gateway pod, run `unset PEER_NODE_SELECTOR` and the same two lines.
 
 Look at the result in cluster1
 ```bash
@@ -185,7 +198,7 @@ metadata:
 spec:
   addresses:
   - type: IPAddress
-    value: 172.30.0.5               # <-- cluster2 node that runs the istio-eastwest pod
+    value: 172.30.0.4               # <-- cluster2 control-plane node (PEER_NODE_SELECTOR)
   gatewayClassName: istio-remote
   listeners:
   - allowedRoutes:
@@ -206,7 +219,7 @@ spec:
       mode: Passthrough
 ```
 
-> **Node IPs and NodePorts are read once.** If a peer node is replaced, the `istio-eastwest` pod moves to another node, or `svc/istio-eastwest` is recreated with new NodePorts, run the `apply_remote_peer` block again.
+> **Node IPs and NodePorts are read once.** If a listed peer node is replaced, or `svc/istio-eastwest` is recreated with new NodePorts, run the `apply_remote_peer` block again. Lab `012` detects both kinds of drift.
 
 ## Verify the peering
 
@@ -226,7 +239,7 @@ Expected output (abridged):
 ✅ Gateway Check: all eastwest gateways programmed
      ✅ istio-gateways/istio-eastwest available at 10.105.232.25
 ✅ Peers Check: all clusters connected
-     ✅ Connected to cluster2 via 172.30.0.5
+     ✅ Connected to cluster2 via 172.30.0.4
 ```
 
 The check reports the ClusterIP of the `istio-eastwest` Service. Peers connect through the node IP and NodePort in their `istio-remote-peer-<peer>` Gateway.
@@ -282,7 +295,7 @@ ztunnel in cluster1 now knows a network gateway for cluster2. Its address is the
 
 Expected output:
 ```
-"NetworkGateway/cluster2/172.30.0.5/32220"
+"NetworkGateway/cluster2/172.30.0.4/32220"
 ```
 
 ## Configure Ingress Gateway in cluster1 to route to the global service
@@ -385,4 +398,4 @@ At this point we have completed the following objectives
 - Reconfigured ingress to the global service hostname
 - Failed productpage over from cluster1 to cluster2 and back
 
-In the next step `007` we will remove everything this workshop created
+In the next step `007` we will lock down the mesh with identity-based policies in both clusters, and quarantine a workload

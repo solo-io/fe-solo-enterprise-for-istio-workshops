@@ -392,6 +392,8 @@ done
 
 You should see a roughly 50/50 mix of `200` and `503` responses.
 
+> **Injected aborts are not retried.** Envoy applies fault injection before it routes the request, so an injected `503` goes straight back to the caller, and a retry policy on the same route does not change the result. The next section breaks a real upstream to show retries.
+
 Remove the fault injection before continuing:
 ```bash
 kubectl delete virtualservice reviews-fault -n bookinfo-backends --context $KUBECONTEXT_CLUSTER1
@@ -401,33 +403,35 @@ kubectl delete virtualservice reviews-fault -n bookinfo-backends --context $KUBE
 
 ## Retries
 
-With fault injection you saw raw failures reaching the caller. Retries let the mesh absorb transient failures transparently.
-
-Apply a single VirtualService that combines the 50% abort fault with a retry policy. Fault injection and retries must be in the same `http` rule — Istio does not support two VirtualServices for the same host:
+A retry policy helps when one replica is broken and the others are healthy. Add a broken replica to the `reviews` Service: a pod with the `app=reviews` and `version=v1` labels whose container runs `sleep` in place of the reviews app, so nothing listens on port `9080`. It has no readiness probe, so Kubernetes adds it to the Service endpoints:
 ```bash
 kubectl apply --context $KUBECONTEXT_CLUSTER1 -f - <<EOF
-apiVersion: networking.istio.io/v1
-kind: VirtualService
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: reviews-fault
+  name: reviews-broken
   namespace: bookinfo-backends
 spec:
-  hosts:
-  - reviews
-  http:
-  - fault:
-      abort:
-        httpStatus: 503
-        percentage:
-          value: 50
-    retries:
-      attempts: 3
-      perTryTimeout: 500ms
-      retryOn: "5xx"
-    route:
-    - destination:
-        host: reviews
+  replicas: 1
+  selector:
+    matchLabels:
+      app: reviews
+      version: v1
+      broken: "true"
+  template:
+    metadata:
+      labels:
+        app: reviews
+        version: v1
+        broken: "true"
+    spec:
+      serviceAccountName: bookinfo-reviews
+      containers:
+      - name: broken
+        image: docker.io/istio/examples-bookinfo-reviews-v1:1.20.2
+        command: ["sleep", "infinity"]
 EOF
+kubectl rollout status deploy/reviews-broken -n bookinfo-backends --watch --timeout=90s --context $KUBECONTEXT_CLUSTER1
 ```
 
 Send 10 requests:
@@ -441,15 +445,51 @@ except urllib.error.HTTPError as e: print(e.code)"
 done
 ```
 
-You should now see mostly `200` responses. Each retry is an independent trial against the 50% fault — the probability all 3 attempts fail is 0.5³ = 12.5%. The mesh is absorbing the majority of faults transparently before they reach the caller.
+You should see a mix of `200` and `503` responses. The waypoint balances across the healthy `reviews-v1` pod and the broken pod, and each request that lands on the broken pod fails.
+
+Add a retry policy. Envoy's `5xx` retry condition also covers connection failures, which is how the broken pod fails:
+```bash
+kubectl apply --context $KUBECONTEXT_CLUSTER1 -f - <<EOF
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: reviews-retry
+  namespace: bookinfo-backends
+spec:
+  hosts:
+  - reviews
+  http:
+  - retries:
+      attempts: 3
+      perTryTimeout: 500ms
+      retryOn: "5xx"
+    route:
+    - destination:
+        host: reviews
+EOF
+```
+
+Send 10 requests again:
+```bash
+for i in $(seq 1 10); do
+  kubectl exec deploy/productpage-v1 -n bookinfo-frontends --context $KUBECONTEXT_CLUSTER1 -- \
+    python3 -c "
+import urllib.request, urllib.error
+try: print(urllib.request.urlopen('http://reviews.bookinfo-backends:9080/reviews/0').getcode())
+except urllib.error.HTTPError as e: print(e.code)"
+done
+```
+
+You should see only `200` responses. When an attempt hits the broken pod, the waypoint retries on another host, so callers never see the failure. Callers also stop seeing the broken replica, so watch the waypoint's retry metrics to find out that a replica is broken.
 
 ![](../images/waypoints-7.png)
 
 ## Cleanup
 
-Remove all VirtualServices and the HTTPRoute created in this lab:
+Remove the broken replica, the VirtualServices and the HTTPRoute created in this lab:
 ```bash
-kubectl delete virtualservice reviews-fault -n bookinfo-backends --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
+kubectl delete deploy reviews-broken -n bookinfo-backends --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
+kubectl delete virtualservice reviews-fault reviews-retry -n bookinfo-backends --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
 kubectl delete httproute reviews -n bookinfo-backends --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
 ```
 
@@ -487,6 +527,6 @@ At this point we have completed the following objectives:
 - Applied an L7 AuthorizationPolicy to enforce HTTP method restrictions
 - Configured weighted traffic splitting across `reviews` service versions
 - Injected delays and HTTP aborts to simulate upstream failures
-- Configured retries to handle transient failures
+- Absorbed a broken replica with retries
 
 In the next step `008` we will inspect mesh metrics using the Istio observability endpoints.

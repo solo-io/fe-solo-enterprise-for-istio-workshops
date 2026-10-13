@@ -1,0 +1,19 @@
+# Allows ns/bookinfo-backends/sa/bookinfo-reviews from either cluster.
+# The trust domains are listed explicitly instead of "*/ns/...", so an identity
+# from any other trust domain that shares the root CA is still denied.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: ratings-auth
+  namespace: bookinfo-backends
+spec:
+  selector:
+    matchLabels:
+      app: ratings
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster1.local/ns/bookinfo-backends/sa/bookinfo-reviews
+        - cluster2.local/ns/bookinfo-backends/sa/bookinfo-reviews

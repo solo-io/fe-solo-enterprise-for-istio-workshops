@@ -1,0 +1,19 @@
+# Allows ns/istio-system/sa/ingress-istio from either cluster.
+# The trust domains are listed explicitly instead of "*/ns/...", so an identity
+# from any other trust domain that shares the root CA is still denied.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: productpage-auth
+  namespace: bookinfo-frontends
+spec:
+  selector:
+    matchLabels:
+      app: productpage
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster1.local/ns/istio-system/sa/ingress-istio
+        - cluster2.local/ns/istio-system/sa/ingress-istio

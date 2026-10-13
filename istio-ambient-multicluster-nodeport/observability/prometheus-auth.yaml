@@ -1,0 +1,18 @@
+# Lab 010: only Grafana in cluster1 and the Prometheus agent in cluster2 may reach the
+# central Prometheus. The agent's remote writes arrive with its cluster2 identity.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: prometheus-auth
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: prometheus
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster1.local/ns/monitoring/sa/grafana
+        - cluster2.local/ns/monitoring/sa/prometheus

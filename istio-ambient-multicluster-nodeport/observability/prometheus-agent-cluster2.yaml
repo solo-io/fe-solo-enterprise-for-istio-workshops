@@ -1,0 +1,150 @@
+# Lab 010: Prometheus in cluster2.
+# Prometheus in agent mode: scrapes the cluster2 mesh components and forwards every
+# sample to the central Prometheus in cluster1. It keeps only a short write-ahead log
+# in an emptyDir. Storage and queries happen in cluster1.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    # In the mesh: remote writes from cluster2 travel over mTLS through the east-west gateway
+    istio.io/dataplane-mode: ambient
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-mesh
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-mesh
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus-mesh
+subjects:
+- kind: ServiceAccount
+  name: prometheus
+  namespace: monitoring
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+    # One job for every mesh component. Istio annotates ztunnel, istiod, gateways and
+    # waypoints with prometheus.io/scrape, port and path. Application pods are not scraped:
+    # in ambient mode ztunnel and the waypoints report the request metrics for them.
+    - job_name: mesh
+      kubernetes_sd_configs:
+      - role: pod
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      # Mesh components only: anything in istio-system or istio-gateways, plus waypoints
+      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_pod_label_gateway_istio_io_managed]
+        separator: ";"
+        action: keep
+        regex: "(istio-system|istio-gateways);.*|.*;istio.io-mesh-controller"
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        regex: '([^:]+)(?::\d+)?;(\d+)'
+        replacement: '$1:$2'
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        regex: (.+)
+        target_label: __metrics_path__
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      # Every series carries the cluster it came from
+      - target_label: cluster
+        replacement: cluster2
+      # Keep-list: only the series the dashboards and alerts use. Everything else that the
+      # components expose (Envoy internals, Go runtime, build info) is dropped at scrape time.
+      metric_relabel_configs:
+      - source_labels: [__name__]
+        action: keep
+        regex: "istio_requests_total|istio_request_duration_milliseconds_bucket|istio_tcp_.*|pilot_xds_pushes|pilot_proxy_convergence_time_bucket|pilot_xds|envoy_cluster_upstream_rq_retry|process_resident_memory_bytes|process_cpu_seconds_total"
+    # Prometheus itself, so you can compare the footprint of the server and the agent
+    - job_name: prometheus
+      static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          cluster: cluster2
+          namespace: monitoring
+      metric_relabel_configs:
+      - source_labels: [__name__]
+        action: keep
+        regex: "process_resident_memory_bytes|prometheus_tsdb_head_series|prometheus_remote_storage_samples_total"
+    remote_write:
+    # The central Prometheus, reached through its global service hostname
+    - url: http://prometheus.monitoring.mesh.internal:9090/api/v1/write
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v3.15.0
+        args:
+        - --config.file=/etc/prometheus/prometheus.yml
+        # Agent mode: scrape and forward, no local database and no query API
+        - --agent
+        - --storage.agent.path=/prometheus
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: config
+          mountPath: /etc/prometheus
+        - name: data
+          mountPath: /prometheus
+      volumes:
+      - name: config
+        configMap:
+          name: prometheus-config
+      # Workshop only: an emptyDir loses the data when the pod restarts. Use a PersistentVolumeClaim in production.
+      - name: data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  selector:
+    app: prometheus
+  ports:
+  - name: http
+    port: 9090
