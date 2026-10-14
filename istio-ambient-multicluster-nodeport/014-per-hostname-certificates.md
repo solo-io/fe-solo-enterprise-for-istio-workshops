@@ -9,14 +9,16 @@
 
 ## Prerequisites
 - This lab assumes you have completed setup from labs `000-013`
-- The ingress gateway address from lab `006` serves port `443`. With a LoadBalancer Service that is automatic. With the NodePort or port-forward fallback, use the `443` NodePort or forward `8443:443` and replace `$INGRESS_IP:443` below
+- `INGRESS_ADDR` from lab `006` is set. If you use the NodePort or port-forward fallback from lab `006`, set `INGRESS_TLS_PORT` below to the `443` NodePort, or set it to `8443` and forward `8443:443` once the HTTPS listener exists
 
 Ensure the following environment variables are set:
 ```bash
 export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context name
 export CERT_MANAGER_VERSION=v1.21.2
 export INGRESS_IP=${INGRESS_ADDR%:*}
-echo "INGRESS_IP=$INGRESS_IP"
+[ "$INGRESS_IP" = localhost ] && export INGRESS_IP=127.0.0.1   # curl --resolve needs an IP
+export INGRESS_TLS_PORT=443           # The 443 NodePort, or 8443 with a port-forward
+echo "INGRESS_IP=$INGRESS_IP INGRESS_TLS_PORT=$INGRESS_TLS_PORT"
 ```
 
 ## Background
@@ -168,7 +170,8 @@ kubectl wait --for=condition=Ready certificate/bookinfo-example-com-tls certific
   -n agentgateway-system --timeout=90s --context $KUBECONTEXT_CLUSTER1
 kubectl get certificate -n agentgateway-system --context $KUBECONTEXT_CLUSTER1
 kubectl rollout status deploy/ingress -n agentgateway-system --watch --timeout=90s --context $KUBECONTEXT_CLUSTER1
-kubectl get svc ingress -n agentgateway-system --context $KUBECONTEXT_CLUSTER1
+kubectl get svc ingress -n agentgateway-system --context $KUBECONTEXT_CLUSTER1 \
+  -o jsonpath='{range .spec.ports[*]}{.port}:{.nodePort} {end}{"\n"}'
 ```
 
 Expected output:
@@ -179,24 +182,25 @@ NAME                       READY   SECRET                     AGE
 bookinfo-example-com-tls   True    bookinfo-example-com-tls   0s
 shop-example-com-tls       True    shop-example-com-tls       0s
 deployment "ingress" successfully rolled out
-NAME      TYPE           CLUSTER-IP      EXTERNAL-IP      PORT(S)                      AGE
-ingress   LoadBalancer   10.111.90.138   172.30.255.254   80:31519/TCP,443:30819/TCP   42m
+80:31519 443:30819 
 ```
 
 cert-manager created one `Certificate` per HTTPS listener, named after the Secret in `certificateRefs`. The `bookinfo-route` from lab `007` has no `hostnames` and no `sectionName`, so it attaches to every listener, including the two new ones.
 
 ## Verify Each Hostname
 
+> **Port-forward users:** start the HTTPS forward now, in another terminal: `kubectl port-forward svc/ingress -n agentgateway-system 8443:443 --context $KUBECONTEXT_CLUSTER1`
+
 Show the certificate that each hostname gets. `-servername` sets the TLS SNI, which the gateway uses to pick the listener:
 ```bash
 for HOST in bookinfo.example.com shop.example.com; do
   echo "== $HOST"
-  openssl s_client -connect $INGRESS_IP:443 -servername $HOST -CAfile internal-root-ca.pem </dev/null 2>/dev/null \
+  openssl s_client -connect $INGRESS_IP:$INGRESS_TLS_PORT -servername $HOST -CAfile internal-root-ca.pem </dev/null 2>/dev/null \
     | grep -E "Peer signature type|Server public key|Verify return code"
-  openssl s_client -connect $INGRESS_IP:443 -servername $HOST </dev/null 2>/dev/null \
+  openssl s_client -connect $INGRESS_IP:$INGRESS_TLS_PORT -servername $HOST </dev/null 2>/dev/null \
     | openssl x509 -noout -issuer -ext subjectAltName
-  curl -s --cacert internal-root-ca.pem --resolve $HOST:443:$INGRESS_IP \
-    -o /dev/null -w "curl https://$HOST/productpage -> %{http_code}\n" https://$HOST/productpage
+  curl -s --cacert internal-root-ca.pem --resolve $HOST:$INGRESS_TLS_PORT:$INGRESS_IP \
+    -o /dev/null -w "curl https://$HOST/productpage -> %{http_code}\n" https://$HOST:$INGRESS_TLS_PORT/productpage
 done
 ```
 
@@ -220,12 +224,12 @@ X509v3 Subject Alternative Name: critical
 curl https://shop.example.com/productpage -> 200
 ```
 
-Each hostname has its own certificate with its own hostname as the only SAN. `ecdsa_secp256r1_sha256` is ECDSA on the P-256 curve, and the 256-bit public key confirms the key size. `curl` verified both chains against the internal root.
+Each hostname has its own ECDSA P-256 certificate with its own hostname as the only SAN, and `curl` verified both chains against the internal root.
 
 Request a hostname that has no listener:
 ```bash
-curl -s --cacert internal-root-ca.pem --resolve other.example.com:443:$INGRESS_IP \
-  -o /dev/null -w "%{http_code} %{errormsg}\n" https://other.example.com/productpage
+curl -s --cacert internal-root-ca.pem --resolve other.example.com:$INGRESS_TLS_PORT:$INGRESS_IP \
+  -o /dev/null -w "%{http_code} %{errormsg}\n" https://other.example.com:$INGRESS_TLS_PORT/productpage
 ```
 
 Expected output (the exact error text depends on your curl build):
@@ -235,25 +239,27 @@ Expected output (the exact error text depends on your curl build):
 
 The gateway closes the handshake, because no listener matches the SNI. It has no default certificate to fall back to, so a mistyped or retired hostname cannot pick up another hostname's certificate.
 
-> **Keeping a wildcard for system traffic.** If a wildcard stays for system components only, give it its own listener with a wildcard `hostname`, such as `*.sys.example.com`. cert-manager issues a wildcard certificate for that listener, and the per-hostname listeners are unaffected, because the gateway matches the most specific hostname first.
-
 ## Rotate a Certificate
 
 Record the serial number and the gateway pod's restart count, then delete the Secret to force cert-manager to issue a new certificate:
 ```bash
 serial() {
-  openssl s_client -connect $INGRESS_IP:443 -servername $1 -CAfile internal-root-ca.pem </dev/null 2>/dev/null \
+  openssl s_client -connect $INGRESS_IP:$INGRESS_TLS_PORT -servername $1 -CAfile internal-root-ca.pem </dev/null 2>/dev/null \
     | openssl x509 -noout -serial
 }
 gateway_restarts() {
   kubectl get pod -n agentgateway-system -l gateway.networking.k8s.io/gateway-name=ingress --context $KUBECONTEXT_CLUSTER1 \
     -o jsonpath='{.items[0].metadata.name} restarts={.items[0].status.containerStatuses[0].restartCount}{"\n"}'
 }
-serial bookinfo.example.com
+OLD_SERIAL=$(serial bookinfo.example.com)
+echo "$OLD_SERIAL"
 gateway_restarts
 kubectl delete secret bookinfo-example-com-tls -n agentgateway-system --context $KUBECONTEXT_CLUSTER1
 kubectl wait --for=condition=Ready certificate/bookinfo-example-com-tls -n agentgateway-system --timeout=60s --context $KUBECONTEXT_CLUSTER1
-sleep 5
+for i in $(seq 1 30); do
+  [ "$(serial bookinfo.example.com)" != "$OLD_SERIAL" ] && break
+  sleep 1
+done
 serial bookinfo.example.com
 gateway_restarts
 ```

@@ -41,12 +41,12 @@ EOF
 
 ## Reach the ingress gateway
 
-Read the load balancer address into `INGRESS_ADDR`. Lab `007` reuses it for every request. AWS returns a hostname and most other providers return an IP, so the jsonpath reads either.
+Read the load balancer address into `INGRESS_ADDR`. Lab `007` reuses it for every request.
 ```bash
 export INGRESS_ADDR=$(kubectl get svc ingress -n agentgateway-system \
   --context $KUBECONTEXT_CLUSTER1 -o jsonpath="{.status.loadBalancer.ingress[0]['hostname','ip']}")
 if [ -z "$INGRESS_ADDR" ]; then
-  echo "⚠️  No external LoadBalancer address available. Use the NodePort or port-forward option below."
+  echo "WARNING: No external LoadBalancer address available. Use the NodePort or port-forward option below, and skip the next curl."
 else
   echo http://$INGRESS_ADDR/productpage
 fi

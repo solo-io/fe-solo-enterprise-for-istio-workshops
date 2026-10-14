@@ -15,7 +15,7 @@ Ensure the following environment variables are set:
 ```bash
 export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context name
 export KUBECONTEXT_CLUSTER2=cluster2  # Replace with your actual kubectl context name
-[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
+[ -n "$INGRESS_ADDR" ] || echo "WARNING: INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
 ```
 
 ## Background
@@ -30,7 +30,7 @@ Three properties of this design matter in a multicluster mesh:
 | Policy is evaluated where the destination runs | A failover from cluster1 to cluster2 is checked against cluster2's policies. Every cluster needs the same policy set |
 | `DENY` is evaluated before `ALLOW` | One `DENY` policy in the root namespace `istio-system` blocks an identity for every workload in that cluster, whatever the `ALLOW` policies say |
 
-> **Why list trust domains instead of `*/ns/...`?** A `*` trust domain matches every identity signed by the shared root CA. That is convenient, and it also trusts any future cluster you peer with. Listing `cluster1.local` and `cluster2.local` keeps the trust set explicit: a new cluster gets access only when you add its trust domain to the policies.
+> **Why list trust domains instead of `*/ns/...`?** A `*` trust domain matches every identity signed by the shared root CA, including any future cluster you peer with. With `cluster1.local` and `cluster2.local` listed, a new cluster gets access only when you add its trust domain to the policies.
 
 The policies for this lab are in `auth-policy/`. Each file allows one Bookinfo hop from both trust domains.
 
@@ -159,7 +159,7 @@ sleep 3
 curl -s http://$INGRESS_ADDR/productpage -o /dev/null -w "%{http_code}\n"
 ```
 
-You should see `200`. Every Bookinfo caller is already in the mesh, so nothing breaks. In ambient, `STRICT` is the only PeerAuthentication mode that changes behavior. ztunnel always sends mTLS between enrolled workloads, so `PERMISSIVE` and per-port settings have nothing to tune.
+You should see `200`. Every Bookinfo caller is already in the mesh, so nothing breaks.
 
 ## Quarantine a Suspect Pod
 
@@ -263,8 +263,8 @@ curl-client-76544d6c64-p2lvg productpage.bookinfo-frontends 200
 
 The suspect failed in two different ways:
 
-- The global hostname does not resolve (curl exit code `6`). ztunnel's DNS proxy answers `*.mesh.internal`, and a pod outside the mesh no longer reaches it. The suspect cannot even find services in the other cluster.
-- The cluster-local Service resets the connection (curl exit code `56`). The connection arrives as plaintext, and the destination ztunnel rejects it.
+- The global hostname does not resolve. ztunnel's DNS proxy answers `*.mesh.internal`, and a pod outside the mesh no longer reaches it. The suspect cannot find services in the other cluster.
+- The cluster-local Service resets the connection. The connection arrives as plaintext, and the destination ztunnel rejects it.
 
 Find the rejection in the ztunnel logs:
 ```bash
@@ -309,6 +309,7 @@ spec:
         - cluster1.local/ns/tenant-a/sa/curl-client
 EOF
 sleep 3
+QUARANTINE_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 ```
 
 Call productpage four times through each hostname, and print the cluster that served each call:
@@ -336,9 +337,10 @@ productpage.bookinfo-frontends.mesh.internal call 3: cluster2
 productpage.bookinfo-frontends.mesh.internal call 4: cluster2
 ```
 
-The cluster-local hostname is blocked on every call. The global hostname works on every call, and cluster2 serves it. Find the reason in the cluster1 ztunnel logs:
+The cluster-local hostname is blocked on every call. The global hostname works on every call, and cluster2 serves it. Find the reason in the cluster1 ztunnel logs. ztunnel writes each line when the connection closes, so wait a few seconds first:
 ```bash
-kubectl logs -n istio-system -l app=ztunnel --context $KUBECONTEXT_CLUSTER1 --since=1m --tail=-1 \
+sleep 5
+kubectl logs -n istio-system -l app=ztunnel --context $KUBECONTEXT_CLUSTER1 --since-time=$QUARANTINE_START --tail=-1 \
   | grep 'src.workload="curl-client' | grep 'direction="outbound"' | grep -E 'error=|response_code=' \
   | sed -E 's/.*(dst.workload="[^"]+").*(error="[^"]+"|response_code=[0-9]+).*/\1 \2/' | sort | uniq -c
 ```
@@ -349,7 +351,7 @@ Expected output:
    4 dst.workload="productpage-v1-59c74584cf-9glph" error="http status: 401 Unauthorized"
 ```
 
-The four calls to the cluster-local hostname reached the cluster1 productpage pod, and its ztunnel rejected each one (`401 Unauthorized` on the HBONE `CONNECT`). The source ztunnel treated those rejections as an unhealthy endpoint. The global service has two endpoints, the cluster1 pod and the cluster2 network gateway, so ztunnel sent all four global calls to cluster2. cluster2 has no quarantine, so it served them. In this workshop the cluster1 pod stayed out of rotation for about two minutes after the last rejection.
+The four calls to the cluster-local hostname reached the cluster1 productpage pod, and its ztunnel rejected each one (`401 Unauthorized` on the HBONE `CONNECT`). The source ztunnel treated those rejections as an unhealthy endpoint. The global service has two endpoints, the cluster1 pod and the cluster2 network gateway, so ztunnel sent all four global calls to cluster2. cluster2 has no quarantine, so it served them. The cluster1 pod stays out of rotation for a few minutes after the last rejection.
 
 > **A quarantine in one cluster leaks through global-service failover.** The same health-based failover that keeps productpage available during an outage also routes a blocked caller to a cluster that still allows it. A quarantine must reach every peered cluster in the same change.
 
@@ -383,9 +385,9 @@ productpage.bookinfo-frontends.mesh.internal call 4: denied
 [pod/ztunnel-k82tv/istio-proxy] 2026-10-12T23:09:38.474613Z	error	access	connection complete	src.addr=10.244.2.56:52114 src.workload="curl-client" src.namespace="tenant-a" src.identity="spiffe://cluster1.local/ns/tenant-a/sa/curl-client" dst.addr=10.244.2.42:15008 dst.hbone_addr=productpage.bookinfo-frontends.mesh.internal:9080 dst.service="productpage.bookinfo-frontends.mesh.internal" dst.workload="productpage-v1-59c74584cf-pxvqb" dst.namespace="bookinfo-frontends" dst.identity="spiffe://cluster2.local/ns/bookinfo-frontends/sa/bookinfo-productpage" direction="inbound" bytes_sent=0 bytes_recv=0 duration="0ms" error="connection closed due to policy rejection: explicitly denied by: istio-system/quarantine"
 ```
 
-`explicitly denied by: istio-system/quarantine` names the policy that blocked the call in cluster2. `src.addr` is the cluster2 east-west gateway, and `src.workload="curl-client"` has no pod suffix, because cluster2 knows the caller only through peering. Treat a quarantine as a fleet-wide change: push the `DENY` to every peered cluster from the same pipeline.
+`explicitly denied by: istio-system/quarantine` names the policy that blocked the call in cluster2.
 
-> **Note:** Authorization stops the mesh traffic. It does not stop the pod from reaching non-mesh destinations, such as the Kubernetes API or the internet. Pair it with a `NetworkPolicy` from your CNI (for example a Cilium policy that selects the quarantined pods) when you need L3 isolation too. Flannel, the CNI in the vind clusters this lab was validated on, does not enforce `NetworkPolicy`.
+> **Mesh traffic only.** Authorization stops the mesh traffic. It does not stop the pod from reaching non-mesh destinations, such as the Kubernetes API or the internet. Pair it with a `NetworkPolicy` from your CNI (for example a Cilium policy that selects the quarantined pods) when you need L3 isolation too. Check that your CNI enforces `NetworkPolicy`.
 
 ## Cleanup
 

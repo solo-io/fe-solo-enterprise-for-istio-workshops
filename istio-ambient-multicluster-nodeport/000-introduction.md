@@ -55,8 +55,7 @@ Solo Enterprise for agentgateway is the ingress gateway. It joins the mesh throu
 - Istio 1.28.10-patch0-solo
 - Solo `peering` Helm chart 1.29.7-patch0-solo, for the east-west and remote-peer Gateways
 - Solo Enterprise for agentgateway v2026.9.3, on Gateway API v1.4.1
-- vind on Docker Desktop (arm64): two clusters with two nodes each, peered over NodePorts, for every lab
-- vind on Docker Desktop (arm64): four clusters with two nodes each for lab `019`
+- Two clusters with two nodes each, peered over NodePorts (four clusters for lab `019`)
 - Istio 1.29.7-patch0-solo as the upgrade target in lab `018`
 
 # High Level Architecture Diagram
@@ -64,9 +63,10 @@ Solo Enterprise for agentgateway is the ingress gateway. It joins the mesh throu
 
 ## License Key Details
 This workshop requires a Solo Trial License Key, exported as `SOLO_TRIAL_LICENSE_KEY` in lab `002`.
-Contact your Solo.io account team if you need one. Check the expiry before you start:
+Contact your Solo.io account team if you need one. Export it and check the expiry before you start:
 
 ```bash
+export SOLO_TRIAL_LICENSE_KEY=<paste-your-key>
 for SEG in $(echo "$SOLO_TRIAL_LICENSE_KEY" | tr '.' ' '); do
   case $(( ${#SEG} % 4 )) in 2) SEG="${SEG}==" ;; 3) SEG="${SEG}=" ;; esac
   EXP=$(printf '%s' "$SEG" | tr '_-' '/+' | base64 -d 2>/dev/null \
@@ -77,6 +77,6 @@ done
 if [ -z "$EXP" ]; then
   echo "Could not read an expiry from SOLO_TRIAL_LICENSE_KEY. Is it set?"
 else
-  date -d "@$EXP" 2>/dev/null || date -r "$EXP"
+  echo "License expires: $(date -d "@$EXP" 2>/dev/null || date -r "$EXP")"
 fi
 ```

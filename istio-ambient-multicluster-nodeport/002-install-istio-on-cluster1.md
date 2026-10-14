@@ -16,17 +16,17 @@ export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context
 export MESH_NAME_CLUSTER1=cluster1    # Recommended to keep as cluster1 for POC
 ```
 
-> **KinD users:** KinD automatically prefixes kubecontext names with `kind-`. You can set `KUBECONTEXT_CLUSTER1=kind-<cluster-name>` but keep `MESH_NAME_CLUSTER1=<cluster-name>` (without the `kind-` prefix). The `MESH_NAME_CLUSTER1` value is the Istio network name. It must match the `topology.istio.io/network` label on the `istio-system` namespace and the ztunnel `NETWORK` env var. Mismatching these causes ztunnel to fail VIP lookups, silently bypassing waypoints.
+> **KinD users:** set `KUBECONTEXT_CLUSTER1=kind-cluster1` and keep `MESH_NAME_CLUSTER1=cluster1`. The mesh name is the Istio network name, and it must match the `topology.istio.io/network` label and the ztunnel network. A mismatch makes ztunnel bypass waypoints.
 
-And export your Solo Trial License Key and Istio version
+Export your Solo Trial License Key (if you did not in lab `000`) and the Istio version:
 ```bash
-export SOLO_TRIAL_LICENSE_KEY=<paste-your-key>
-[ -n "$SOLO_TRIAL_LICENSE_KEY" ] || echo "⚠️  SOLO_TRIAL_LICENSE_KEY is not set. Istio installs with an empty license and enterprise features, including multicluster peering, then fail."
+export SOLO_TRIAL_LICENSE_KEY=${SOLO_TRIAL_LICENSE_KEY:-<paste-your-key>}
+case "$SOLO_TRIAL_LICENSE_KEY" in ""|"<paste-your-key>") echo "WARNING: SOLO_TRIAL_LICENSE_KEY is not set. Istio installs with an empty license and enterprise features, including multicluster peering, then fail." ;; esac
 export ISTIO_VERSION=1.28.10-patch0
 ```
 
 ## Install Solo istioctl
-This will be required to use the `istioctl multicluster link` commands
+Later labs use `solo-istioctl` to inspect ztunnel and peering:
 ```bash
 OS=$(uname | tr '[:upper:]' '[:lower:]' | sed -E 's/darwin/osx/')
 ARCH=$(uname -m | sed -E 's/aarch/arm/; s/x86_64/amd64/; s/armv7l/armv7/')
@@ -145,18 +145,16 @@ Install istio-base
 ```bash
 helm upgrade --kube-context $KUBECONTEXT_CLUSTER1 --install istio-base oci://us-docker.pkg.dev/soloio-img/istio-helm/base -n istio-system --version $ISTIO_VERSION-solo --create-namespace
 
-kubectl label namespace istio-system topology.istio.io/network=$MESH_NAME_CLUSTER1 --context $KUBECONTEXT_CLUSTER1
+kubectl label namespace istio-system topology.istio.io/network=$MESH_NAME_CLUSTER1 --overwrite --context $KUBECONTEXT_CLUSTER1
 ```
 
-Install Kubernetes Gateway CRDs if not already present
-
-**NOTE:** The command below is idempotent. It checks whether the CRDs exist before applying them and is safe to run on any Kubernetes distribution. Istio 1.28 is built against Gateway API `v1.4.1`, so the command pins that release.
+Install the Gateway API `v1.4.1` CRDs if they are missing. Istio 1.28 is built against this release.
 ```bash
 kubectl get crd gateways.gateway.networking.k8s.io --context $KUBECONTEXT_CLUSTER1 &> /dev/null || \
   { kubectl --context $KUBECONTEXT_CLUSTER1 apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml; }
 ```
 
-> **GKE only:** Any pods with the `system-node-critical` priorityClassName can only be installed in namespaces that have a ResourceQuota defined. By default in GKE, only `kube-system` has a defined ResourceQuota for the node-critical class. Run the following to allow `istio-cni` to be deployed in the `istio-system` namespace:
+> **GKE only:** GKE runs `system-node-critical` pods only in namespaces with a ResourceQuota. Allow `istio-cni` to run in `istio-system`:
 > ```bash
 > kubectl apply -f gke/resourcequota.yaml --context $KUBECONTEXT_CLUSTER1
 > ```
@@ -211,8 +209,6 @@ env:
   PILOT_ENABLE_IP_AUTOALLOCATE: "true"
   # Required if you have distinct trust domains per-cluster
   PILOT_SKIP_VALIDATE_TRUST_DOMAIN: "true"
-  # Enables experimental Gateway API features to be used
-  #PILOT_ENABLE_ALPHA_GATEWAY_API: "true"
 # Required to enable multi-cluster support
 platforms:
   peering:
@@ -258,6 +254,21 @@ EOF
 Wait for rollout to complete
 ```bash
 kubectl rollout status ds/ztunnel -n istio-system --watch --timeout=90s --context $KUBECONTEXT_CLUSTER1
+```
+
+## Validate the installation
+```bash
+kubectl get pods -n istio-system --context $KUBECONTEXT_CLUSTER1
+```
+
+Expected output:
+```
+NAME                      READY   STATUS    RESTARTS   AGE
+istio-cni-node-799nr      1/1     Running   0          14s
+istio-cni-node-ltn2g      1/1     Running   0          14s
+istiod-55ddf67c4f-x9xfh   1/1     Running   0          7s
+ztunnel-m96zt             1/1     Running   0          2s
+ztunnel-tzxkk             1/1     Running   0          2s
 ```
 
 ## Next Steps

@@ -1,0 +1,10 @@
+# Requires mTLS for every enrolled workload in the cluster (labs 008 and 019).
+# A PeerAuthentication in the root namespace applies mesh-wide.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: istio-system
+spec:
+  mtls:
+    mode: STRICT

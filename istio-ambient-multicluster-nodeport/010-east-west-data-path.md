@@ -1,7 +1,7 @@
 # Trace the East-West Data Path and Measure Each Hop
 
 # Objectives
-- Trace five east-west paths through the ztunnel logs and name every proxy on each path
+- Trace four mesh paths through the ztunnel logs and name every proxy on each path
 - Measure the latency of each path with fortio, from a no-mesh baseline to a cross-cluster call
 - Send a central-gateway hostname straight to in-mesh pods with a `ServiceEntry`, with no application change
 - List the cases where traffic still goes through a gateway or a proxy
@@ -14,7 +14,6 @@ Ensure the following environment variables are set:
 ```bash
 export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context name
 export KUBECONTEXT_CLUSTER2=cluster2  # Replace with your actual kubectl context name
-export MESH_NAME_CLUSTER2=cluster2    # Recommended to keep as cluster2 for POC
 ```
 
 ## Background
@@ -48,13 +47,13 @@ kubectl wait --for=condition=Available deploy --all -n perf --timeout=180s --con
 
 Expected output (pod suffixes and addresses differ on your machine):
 ```
-NAMESPACE          POD NAME                                        ADDRESS      NODE     WAYPOINT PROTOCOL
-perf               autogen.cluster2.perf.echo-remote                                     None     HBONE
-perf               echo-959df6568-mjrzb                            10.244.2.100 worker-1 None     HBONE
-perf               echo-nomesh-75bbb89cb8-n2l9n                    10.244.2.101 worker-1 None     TCP
-perf               fortio-client-76cc5c86c8-mg8tg                  10.244.2.97  worker-1 None     HBONE
-perf               fortio-client-nomesh-54858c8c74-w8hfs           10.244.2.98  worker-1 None     TCP
-perf               waypoint-5dc9fb8d6-crz7g                        10.244.2.99  worker-1 None     TCP
+NAMESPACE           POD NAME                                                                 ADDRESS                                    NODE     WAYPOINT PROTOCOL
+perf                autogen.cluster2.perf.echo-remote                                                                                            None     HBONE
+perf                echo-959df6568-kbg7p                                                     10.244.0.40                                cluster1 None     HBONE
+perf                echo-nomesh-75bbb89cb8-bfd9s                                             10.244.0.41                                cluster1 None     TCP
+perf                fortio-client-76cc5c86c8-nf7hl                                           10.244.0.38                                cluster1 None     HBONE
+perf                fortio-client-nomesh-54858c8c74-nhr9s                                    10.244.2.21                                worker-1 None     TCP
+perf                waypoint-5dc9fb8d6-rnj78                                                 10.244.0.39                                cluster1 None     TCP
 ```
 
 The two `-nomesh` pods are `TCP`, outside the mesh. The waypoint shows `TCP` because it terminates HBONE itself instead of going through ztunnel. `autogen.cluster2.perf.echo-remote` has no address: it is the cluster2 side of the global `echo-remote` Service, which ztunnel reaches through the cluster2 east-west gateway.
@@ -87,10 +86,10 @@ kubectl logs -n istio-system -l app=ztunnel --context $KUBECONTEXT_CLUSTER1 --si
 
 Expected output (addresses differ on your machine):
 ```
-dst.addr=10.244.1.42:80	dst.service="ingress.agentgateway-system.svc.cluster.local"	dst.workload="ingress-55cd48866f-8bgcj"
-dst.addr=10.244.1.58:15008	dst.service="echo.perf.svc.cluster.local"	dst.workload="echo-959df6568-vvdv9"
-dst.addr=10.244.1.59:15008	dst.service="echo-l7.perf.svc.cluster.local"	dst.workload="waypoint-5dc9fb8d6-tvc9f"
-dst.addr=172.30.0.4:31508	dst.service="echo-remote.perf.mesh.internal"	dst.workload="autogen.node.cluster2.cluster2.4f489252"
+dst.addr=10.244.0.27:80	dst.service="ingress.agentgateway-system.svc.cluster.local"	dst.workload="ingress-6496d9d9c8-knst9"
+dst.addr=10.244.0.39:15008	dst.service="echo-l7.perf.svc.cluster.local"	dst.workload="waypoint-5dc9fb8d6-rnj78"
+dst.addr=10.244.0.40:15008	dst.service="echo.perf.svc.cluster.local"	dst.workload="echo-959df6568-kbg7p"
+dst.addr=172.30.0.4:31508	dst.service="echo-remote.perf.mesh.internal"	dst.workload="autogen.node.cluster2.cluster2.77f30e0c"
 ```
 
 Each line is the first hop that the source ztunnel opened:
@@ -98,28 +97,27 @@ Each line is the first hop that the source ztunnel opened:
 - `echo` goes straight to the `echo` pod IP on `15008`. This is path 2: one HBONE connection from node to node, and nothing in between.
 - `echo-l7` goes to the waypoint pod on `15008`. The waypoint then opens a second HBONE connection to the `echo` pod.
 - `ingress.agentgateway-system` goes to the agentgateway pod on port `80`, not `15008`. agentgateway runs outside ztunnel's capture (lab `005`), so this hop is plaintext. agentgateway then opens HBONE to `echo`. Hairpinning through a gateway adds a proxy hop, and also an unencrypted hop.
-- `echo-remote` goes to `autogen.node.cluster2.<node>`, the entry istiod generated for the cluster2 node that runs the east-west pod (lab `007`). ztunnel connects to that node's IP, `172.30.0.4`, on the HBONE NodePort `31508`.
+- `echo-remote` goes to `autogen.node.cluster2.<node>`, the entry istiod generated for the cluster2 node that runs the east-west pod (lab `007`). ztunnel connects to that node's IP on the HBONE NodePort `31508`.
 
-The waypoint's own hop to the `echo` pod does not show up in this log right away. The waypoint keeps a pool of long-lived HBONE connections to its backends, and ztunnel writes a `connection complete` line only when a connection closes. Lab `009` showed that hop from the policy side: the backend pods saw the waypoint's identity, not the caller's.
+The waypoint's own hop to `echo` appears only when its pooled connection closes, because ztunnel logs `connection complete` at close.
 
 See the far side of the cross-cluster path in cluster2:
 ```bash
 kubectl logs -n istio-system -l app=ztunnel --context $KUBECONTEXT_CLUSTER2 --since=1m --tail=-1 \
   | grep 'src.workload="fortio-client"' | grep "connection complete" | tail -1 \
   | grep -oE 'src.addr=[^ ]+|src.identity="[^"]+"|dst.workload="[^"]+"|dst.identity="[^"]+"' | paste - - - -
-kubectl get pods -n istio-gateways -l gateway.networking.k8s.io/gateway-name=istio-eastwest -o wide --context $KUBECONTEXT_CLUSTER2
+kubectl get pods -n istio-gateways -l gateway.networking.k8s.io/gateway-name=istio-eastwest --context $KUBECONTEXT_CLUSTER2 \
+  -o custom-columns=POD:.metadata.name,POD_IP:.status.podIP,NODE:.spec.nodeName,NODE_IP:.status.hostIP
 ```
 
 Expected output:
 ```
-src.addr=10.244.2.56:52530	src.identity="spiffe://cluster1.local/ns/perf/sa/default"	dst.workload="echo-959df6568-k26xv"	dst.identity="spiffe://cluster2.local/ns/perf/sa/default"
-NAME                             READY   STATUS    RESTARTS   AGE     IP            NODE       NOMINATED NODE   READINESS GATES
-istio-eastwest-7bbf6d47d-6mjhh   1/1     Running   0          5h51m   10.244.2.56   worker-1   <none>           <none>
+src.addr=10.244.0.10:47070	src.identity="spiffe://cluster1.local/ns/perf/sa/default"	dst.workload="echo-959df6568-qhvmj"	dst.identity="spiffe://cluster2.local/ns/perf/sa/default"
+POD                               POD_IP        NODE     NODE_IP
+istio-eastwest-58c688b6f8-fdjhz   10.244.0.10   cluster2 172.30.0.4
 ```
 
-`src.addr` is the east-west gateway pod, and `src.identity` is still the original cluster1 client. The east-west gateway forwards the inner HBONE stream without terminating its mTLS, so the destination checks policy against the real caller, as lab `008` showed.
-
-> **HBONE goes straight to the east-west gateway's node.** `dst.addr` is the node that runs the cluster2 east-west pod, so kube-proxy on that node delivers the connection to a local pod. The remote-peer Gateway's address, the cluster2 control-plane node from lab `007`, carries only the xDS link between the two istiods. Lab `013` shows how the HBONE address follows the pod when it moves.
+`src.addr` is the east-west gateway pod, and `src.identity` is still the original cluster1 client. The east-west gateway forwards the inner HBONE stream without terminating its mTLS, so the destination checks policy against the real caller, as lab `008` showed. `NODE_IP` is the `dst.addr` that cluster1 ztunnel used: HBONE goes to the node that runs the east-west pod. When that pod runs on a worker, this address differs from the remote-peer address (lab `007`).
 
 ## Measure Each Path
 
@@ -151,9 +149,9 @@ Expected output (the run takes about 75 seconds; numbers differ on your machine)
 5 cross-cluster        p50  1.06 ms   p90  1.85 ms   p99  3.75 ms   200s 3000
 ```
 
-Ambient L4 adds a fraction of a millisecond over no mesh: it adds mTLS and identity, and keeps the same network path. The waypoint, the ingress hairpin and the east-west gateway each add a similar amount on top of the L4 path, because each one is a single proxy hop. Moving an internal call from path 4 to path 2 removes that hop and halves the median in this run. All 15,000 requests returned `200`.
+Ambient L4 adds a fraction of a millisecond over no mesh: it adds mTLS and identity, and keeps the same network path. The waypoint, the ingress hairpin and the east-west gateway each add a similar amount on top of the L4 path, because each one is a single proxy hop. Moving an internal call from path 4 to path 2 removes that hop, and the median drops by about half in the sample above. All 15,000 requests returned `200`.
 
-> **These numbers come from a laptop.** The validation run used vind on Docker Desktop, where every node is a container on one machine, so network latency between nodes is close to zero. Use the relative difference between paths to design your own test. On real hardware, run the same five paths at your production request rates, payload sizes and connection counts, and measure your current gateway path as the baseline.
+> **These numbers come from a single-machine test cluster.** Every node runs on one host, so network latency between nodes is close to zero. Use the relative difference between paths to design your own test. On real hardware, run the same five paths at your production request rates, payload sizes and connection counts, and measure your current gateway path as the baseline.
 
 ## Bypass a Central Gateway Without Changing the Caller
 
@@ -192,7 +190,7 @@ kubectl logs -n istio-system -l app=ztunnel --context $KUBECONTEXT_CLUSTER1 --si
 Expected output:
 ```
 HTTP/1.1 200 OK
-dst.addr=10.244.2.100:15008	dst.workload="echo-959df6568-mjrzb"	dst.identity="spiffe://cluster1.local/ns/perf/sa/default"
+dst.addr=10.244.0.40:15008	dst.workload="echo-959df6568-kbg7p"	dst.identity="spiffe://cluster1.local/ns/perf/sa/default"
 ```
 
 The client still called `http://api-gateway.corp.example/echo`. ztunnel resolved the name to the `ServiceEntry`, and opened HBONE directly to the `echo` pod, which is path 2. Measure it:
@@ -224,7 +222,7 @@ Ambient keeps east-west traffic direct between enrolled workloads. Traffic still
 
 Cross-namespace calls and calls across mTLS policy boundaries do not add a hop. Namespaces and `AuthorizationPolicy` change what is allowed, not the path.
 
-> **Running on Cilium with kube-proxy replacement?** ztunnel does the Service load balancing for enrolled pods, so it must see the original Service IP. Istio's [platform prerequisites](https://istio.io/latest/docs/ambient/install/platform-prerequisites/#cilium) list the Cilium settings ambient needs (`cni.exclusive=false`, no BPF masquerading) and point to the [Cilium Istio integration page](https://docs.cilium.io/en/stable/network/servicemesh/istio/) for the extra kube-proxy replacement settings, including `socketLB.hostNamespaceOnly=true`. Without that setting, Cilium's socket load balancer rewrites the Service IP inside the pod before ztunnel sees it. Re-run this lab's five paths after you turn kube-proxy replacement on.
+> **Running on Cilium with kube-proxy replacement?** ztunnel does the Service load balancing for enrolled pods, so it must see the original Service IP. Istio's [platform prerequisites](https://istio.io/latest/docs/ambient/install/platform-prerequisites/#cilium) list the Cilium settings ambient needs, including `socketLB.hostNamespaceOnly=true`.
 
 ## Cleanup
 
@@ -237,7 +235,7 @@ kubectl delete -f perf/perf-cluster2.yaml --context $KUBECONTEXT_CLUSTER2 --igno
 
 ## Next Steps
 At this point we have completed the following objectives:
-- Traced five east-west paths through the ztunnel logs and named every proxy on each path
+- Traced four mesh paths through the ztunnel logs and named every proxy on each path
 - Measured the latency of each path with fortio, from a no-mesh baseline to a cross-cluster call
 - Sent a central-gateway hostname straight to in-mesh pods with a `ServiceEntry`, with no application change
 - Listed the cases where traffic still goes through a gateway or a proxy

@@ -16,16 +16,14 @@ export KUBECONTEXT_CLUSTER2=cluster2  # Replace with your actual kubectl context
 export MESH_NAME_CLUSTER2=cluster2    # Recommended to keep as cluster2 for POC
 ```
 
-> **KinD users:** KinD automatically prefixes kubecontext names with `kind-`. You can set `KUBECONTEXT_CLUSTER2=kind-<cluster-name>` but keep `MESH_NAME_CLUSTER2=<cluster-name>` (without the `kind-` prefix). The `MESH_NAME_CLUSTER2` value is the Istio network name. It must match the `topology.istio.io/network` label on the `istio-system` namespace and the ztunnel `NETWORK` env var. Mismatching these causes ztunnel to fail VIP lookups, silently bypassing waypoints.
-
-And export your Solo Trial License Key and Istio version
+The KinD, Gateway API and GKE notes from lab `002` apply here too. This lab uses the `SOLO_TRIAL_LICENSE_KEY` and `ISTIO_VERSION` from lab `002`:
 ```bash
-export SOLO_TRIAL_LICENSE_KEY=<paste-your-key>
-[ -n "$SOLO_TRIAL_LICENSE_KEY" ] || echo "⚠️  SOLO_TRIAL_LICENSE_KEY is not set. Istio installs with an empty license and enterprise features, including multicluster peering, then fail."
+[ -n "$SOLO_TRIAL_LICENSE_KEY" ] || echo "WARNING: SOLO_TRIAL_LICENSE_KEY is not set. Export it as in lab 002."
 export ISTIO_VERSION=1.28.10-patch0
 ```
 
 ## Create istio-system namespace and shared root trust secret in cluster2
+Run this from the workshop directory, where lab `002` wrote `shared-root-trust-secret.yaml`:
 ```bash
 kubectl create namespace istio-system --context $KUBECONTEXT_CLUSTER2 --dry-run=client -o yaml | kubectl apply --context $KUBECONTEXT_CLUSTER2 -f -
 kubectl apply -f shared-root-trust-secret.yaml --context $KUBECONTEXT_CLUSTER2
@@ -37,18 +35,16 @@ Install istio-base
 ```bash
 helm upgrade --kube-context $KUBECONTEXT_CLUSTER2 --install istio-base oci://us-docker.pkg.dev/soloio-img/istio-helm/base -n istio-system --version $ISTIO_VERSION-solo --create-namespace
 
-kubectl label namespace istio-system topology.istio.io/network=$MESH_NAME_CLUSTER2 --context $KUBECONTEXT_CLUSTER2
+kubectl label namespace istio-system topology.istio.io/network=$MESH_NAME_CLUSTER2 --overwrite --context $KUBECONTEXT_CLUSTER2
 ```
 
-Install Kubernetes Gateway CRDs if not already present
-
-**NOTE:** The command below is idempotent. It checks whether the CRDs exist before applying them and is safe to run on any Kubernetes distribution. Istio 1.28 is built against Gateway API `v1.4.1`, so the command pins that release.
+Install the Gateway API CRDs if they are missing:
 ```bash
 kubectl get crd gateways.gateway.networking.k8s.io --context $KUBECONTEXT_CLUSTER2 &> /dev/null || \
   { kubectl --context $KUBECONTEXT_CLUSTER2 apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml; }
 ```
 
-> **GKE only:** Any pods with the `system-node-critical` priorityClassName can only be installed in namespaces that have a ResourceQuota defined. By default in GKE, only `kube-system` has a defined ResourceQuota for the node-critical class. Run the following to allow `istio-cni` to be deployed in the `istio-system` namespace:
+> **GKE only:**
 > ```bash
 > kubectl apply -f gke/resourcequota.yaml --context $KUBECONTEXT_CLUSTER2
 > ```
@@ -103,8 +99,6 @@ env:
   PILOT_ENABLE_IP_AUTOALLOCATE: "true"
   # Required if you have distinct trust domains per-cluster
   PILOT_SKIP_VALIDATE_TRUST_DOMAIN: "true"
-  # Enables experimental Gateway API features to be used
-  #PILOT_ENABLE_ALPHA_GATEWAY_API: "true"
 # Required to enable multi-cluster support
 platforms:
   peering:
@@ -150,6 +144,21 @@ EOF
 Wait for rollout to complete
 ```bash
 kubectl rollout status ds/ztunnel -n istio-system --watch --timeout=90s --context $KUBECONTEXT_CLUSTER2
+```
+
+## Validate the installation
+```bash
+kubectl get pods -n istio-system --context $KUBECONTEXT_CLUSTER2
+```
+
+Expected output:
+```
+NAME                      READY   STATUS    RESTARTS   AGE
+istio-cni-node-6pntk      1/1     Running   0          14s
+istio-cni-node-ksccv      1/1     Running   0          14s
+istiod-78f896bd9b-n7jj5   1/1     Running   0          7s
+ztunnel-572zg             1/1     Running   0          2s
+ztunnel-fknlh             1/1     Running   0          2s
 ```
 
 ## Next Steps

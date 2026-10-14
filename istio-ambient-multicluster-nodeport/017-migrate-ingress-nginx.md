@@ -15,7 +15,7 @@ Ensure the following environment variables are set:
 ```bash
 export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context name
 export INGRESS2GATEWAY_VERSION=v1.2.0
-[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
+[ -n "$INGRESS_ADDR" ] || echo "WARNING: INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
 ```
 
 ## Background
@@ -297,14 +297,14 @@ Expected output:
 URL=/items/42?version=v1
 ```
 
-The backend received `/items/42?version=v1`. The policy applies to the `api` route only, so other hostnames keep plain Gateway API matching. Keep these policies to the hostnames that need them: a prefix rewrite stays portable to any Gateway API implementation, and a CEL rewrite is specific to agentgateway.
+The backend received `/items/42?version=v1`. The policy applies to the `api` route only. A prefix rewrite works on any Gateway API implementation. A CEL rewrite works only on agentgateway.
 
 ## Serve gRPC with Mesh mTLS
 
 Convert the gRPC Ingress:
 ```bash
 ./ingress2gateway print --providers ingress-nginx --emitter agentgateway --input-file ingress-nginx/team-grpc.yaml --no-color 2>&1 | grep -A2 "WARN" | grep "│  [A-Z]"
-./ingress2gateway print --providers ingress-nginx --emitter agentgateway --input-file ingress-nginx/team-grpc.yaml --no-color 2>/dev/null | sed -n '/kind: GRPCRoute/,$p'
+./ingress2gateway print --providers ingress-nginx --emitter agentgateway --input-file ingress-nginx/team-grpc.yaml --no-color 2>/dev/null | sed -n '/kind: GRPCRoute/,/^status:/p' | sed '$d'
 ```
 
 Expected output:
@@ -326,8 +326,6 @@ spec:
   - backendRefs:
     - name: echo
       port: 7070
-status:
-  parents: null
 ```
 
 The tool produced a `GRPCRoute`. The output has nothing for `backend-protocol: GRPCS`, `proxy-ssl-secret` or `proxy-ssl-verify`, and no warning names them: the first warning says that untranslated gRPC behavior may go unreported. Those three annotations made ingress-nginx connect to the backend over TLS, present a client certificate, and verify the backend's certificate.
@@ -418,7 +416,7 @@ The echo image includes a client. Call the backend through the gateway with the 
 ```bash
 echo "== through the ingress gateway"
 kubectl exec deploy/echo -n grpc-echo --context $KUBECONTEXT_CLUSTER1 -- \
-  /usr/local/bin/client grpc://ingress.agentgateway-system:80 -H "Host: grpc.example.com" 2>&1 | grep -E "Proto=|Hostname=|requests succeeded"
+  /usr/local/bin/client grpc://ingress.agentgateway-system:80 -H "Host: grpc.example.com" 2>&1 | grep -oE "Proto=[A-Z]+|Hostname=[^ ]+|All requests succeeded"
 echo "== direct to the backend"
 kubectl exec deploy/echo -n grpc-echo --context $KUBECONTEXT_CLUSTER1 -- \
   /usr/local/bin/client grpc://echo.grpc-echo:7070 > /dev/null 2>&1 && echo "allowed" || echo "denied"
@@ -431,9 +429,9 @@ kubectl logs -n istio-system -l app=ztunnel --context $KUBECONTEXT_CLUSTER1 --si
 Expected output:
 ```
 == through the ingress gateway
-[0 body] Proto=GRPC
-[0 body] Hostname=echo-6768cb6b65-8pw4w
-2026-10-13T20:00:17.748418Z	info	All requests succeeded
+Proto=GRPC
+Hostname=echo-6768cb6b65-8pw4w
+All requests succeeded
 == direct to the backend
 denied
 src.identity="spiffe://cluster1.local/ns/agentgateway-system/sa/ingress" dst.addr=10.244.1.78:15008 dst.identity="spiffe://cluster1.local/ns/grpc-echo/sa/default" protocol=HTTP2
@@ -448,23 +446,21 @@ The gateway reached the backend over HBONE (`15008`) with both identities verifi
 Teams that ran Istio with sidecars have `networking.istio.io` `Gateway` and `VirtualService` objects instead of `Ingress`. The tool's `istio` provider converts them. Look at the source, then convert it:
 ```bash
 cat ingress-nginx/istio-sidecar-ingress.yaml
-./ingress2gateway print --providers istio --emitter agentgateway --input-file ingress-nginx/istio-sidecar-ingress.yaml --no-color 2>&1 \
-  | grep -E "ignoring field|weight:|kind: HTTPRoute|name: bookinfo-idx|value: /store|timeouts" | sort -u
+./ingress2gateway print --providers istio --emitter agentgateway --input-file ingress-nginx/istio-sidecar-ingress.yaml --no-color 2>&1 >/dev/null \
+  | grep -o "ignoring field: .*" | sort -u
+./ingress2gateway print --providers istio --emitter agentgateway --input-file ingress-nginx/istio-sidecar-ingress.yaml --no-color 2>/dev/null \
+  | grep -E "name: bookinfo-idx|weight:|value: /store" | sed 's/^ *//' | sort -u
 ```
 
-Expected output (the line order depends on your locale):
+Expected output:
 ```
-        value: /store/
-      weight: 0
-    timeouts:
-  name: bookinfo-idx-0
-  name: bookinfo-idx-1-prefix-match
-  name: bookinfo-idx-2
-I1013 13:00:20.013188   15028 converter.go:168] ignoring field: istio.Gateway[bookinfo-gateway].Server[0].Port.Name
-I1013 13:00:20.013406   15028 converter.go:592] ignoring field: istio.VirtualService[bookinfo-frontends/bookinfo].Http[2].Retries
-kind: HTTPRoute
-│  ignoring field: istio.Gateway[bookinfo-gateway].Server[0].Port.Name
-│  ignoring field: istio.VirtualService[bookinfo-frontends/bookinfo].Http[2].Retries
+ignoring field: istio.Gateway[bookinfo-gateway].Server[0].Port.Name
+ignoring field: istio.VirtualService[bookinfo-frontends/bookinfo].Http[2].Retries
+name: bookinfo-idx-0
+name: bookinfo-idx-1-prefix-match
+name: bookinfo-idx-2
+value: /store/
+weight: 0
 ```
 
 Review the output against the source:
@@ -510,26 +506,6 @@ Expected output:
 ingress2gateway warnings: 2
 Review each warning and record how the reviewed route handles it before merging.
 ```
-
-## Inventory Portable and Istio-Specific Objects
-
-After a migration, count which objects in each namespace are standard Gateway API and which are Istio-specific. The count is a measure of how much configuration would need rework on another mesh or gateway:
-```bash
-for NS in bookinfo-frontends bookinfo-backends grpc-echo; do
-  STANDARD=$(kubectl get gateways.gateway.networking.k8s.io,httproutes,grpcroutes -n $NS --context $KUBECONTEXT_CLUSTER1 --no-headers 2>/dev/null | wc -l | tr -d ' ')
-  ISTIO=$(kubectl get virtualservices,destinationrules,authorizationpolicies,peerauthentications,requestauthentications,serviceentries,telemetries -n $NS --context $KUBECONTEXT_CLUSTER1 --no-headers 2>/dev/null | wc -l | tr -d ' ')
-  echo "$NS: $STANDARD Gateway API, $ISTIO Istio-specific"
-done
-```
-
-Expected output:
-```
-bookinfo-frontends: 2 Gateway API, 2 Istio-specific
-bookinfo-backends: 1 Gateway API, 7 Istio-specific
-grpc-echo: 1 Gateway API, 1 Istio-specific
-```
-
-Routing moved to Gateway API. Security stays Istio-specific: the `AuthorizationPolicy` resources are the largest group, because Gateway API has no standard resource for workload identity policy.
 
 ## Cleanup
 

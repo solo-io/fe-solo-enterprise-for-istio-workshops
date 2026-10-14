@@ -20,9 +20,6 @@ Useful commands:
 #get version info of binary AND cluster in current kubectl context
 ./solo-istioctl version
 
-#useful for removing Istio when iterating version / testing
-./solo-istioctl uninstall --purge -y --context $context 
-
 #check peering health across both clusters
 ./solo-istioctl multicluster check --contexts=${KUBECONTEXT_CLUSTER1},${KUBECONTEXT_CLUSTER2}
 
@@ -36,12 +33,11 @@ Useful commands:
 ./solo-istioctl waypoint
 ```
 
-> **Note:** lab `007` creates the east-west and remote-peer Gateways with Solo's `peering` Helm chart. In 1.28,
-> `./solo-istioctl multicluster expose` and `link` expect a LoadBalancer address on the east-west gateway.
+Lab `007` creates the east-west and remote-peer Gateways with Solo's `peering` Helm chart.
 
 ## Optional Tools
 #### K9s (CLI K8s control)
-https://k9scli.io/ Takes a bit to get used, but is very powerful.
+https://k9scli.io/ terminal UI for Kubernetes clusters.
 On Mac / Linux:
 ```bash
  #install 
@@ -50,9 +46,8 @@ On Mac / Linux:
  k9s
 ```
 
-On Mac/Linux:
 #### Vegeta (CLI load generator)
-https://github.com/tsenart/vegeta Very easy to use command line load generator with a command line output result
+https://github.com/tsenart/vegeta command line load generator with a text report
 On Mac/Linux:
 ```bash
 #install
@@ -65,11 +60,7 @@ echo "GET http://yourhostname/path" | vegeta attack -duration=600s -rate=1 | veg
 https://github.com/kubernetes-sigs/ingress2gateway converts `Ingress` objects and some provider resources to Gateway API. Lab `017` downloads the release binary into the workshop directory.
 
 #### Fortio (load generator)
-https://github.com/fortio/fortio Fortio has a lot of features for load testing and reporting, and can be run in a k8s pod. This is for more feature complete stress testing, for more quick and dirty results use Vegeta
-On Mac/Linux:
-```bash
-brew install fortio
-```
+https://github.com/fortio/fortio load generator with latency histograms. Lab `010` runs it as a pod in each cluster.
 ## Troubleshooting Resources:
 Solo Istio service mesh troubleshooting (check here first)
 https://docs.solo.io/istio/1.28.x/troubleshooting/service-mesh/

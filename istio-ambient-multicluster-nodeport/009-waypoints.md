@@ -17,7 +17,7 @@ Ensure the following environment variables are set:
 ```bash
 export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context name
 export KUBECONTEXT_CLUSTER2=cluster2  # Replace with your actual kubectl context name
-[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
+[ -n "$INGRESS_ADDR" ] || echo "WARNING: INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
 ```
 
 ## Background
@@ -89,9 +89,9 @@ Expected output:
 
 The waypoint changed the traffic path. productpage now connects to the waypoint, and the waypoint connects to the `details` pod. The ztunnel in front of `details` sees `bookinfo-backends/sa/waypoint` as the caller, and the lab `008` policies only allow `bookinfo-frontends/sa/bookinfo-productpage`, so ztunnel denies every backend call.
 
-Split enforcement across the two hops. Read the file first, the comment at the top explains each part:
+Split enforcement across the two hops. The comment at the top of the file explains each part:
 ```bash
-cat auth-policy/waypoint-auth.yaml
+sed -n '1,17p' auth-policy/waypoint-auth.yaml
 for context in $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2; do
   kubectl apply -f auth-policy/waypoint-auth.yaml --context $context
 done
@@ -103,10 +103,6 @@ Expected output:
 ```
    2 cluster1
 ```
-
-The `selector` policies replace the lab `008` pod policies: now only the waypoint may deliver to a backend pod, which also stops a caller from connecting to a pod directly and skipping the waypoint. The `targetRefs` policies carry the identity rules and run on the waypoint, which terminates the caller's mTLS connection and reads the original identity.
-
-> **Don't take the shortcut.** Adding `ns/bookinfo-backends/sa/waypoint` to the lab `008` policies restores the page too, but it makes every backend pod trust anything the waypoint forwards, so any workload in the mesh could reach any backend.
 
 Check that the rules still hold. `reviews` may call `ratings`, and only productpage may call `details`:
 ```bash
@@ -187,14 +183,15 @@ for m in ['GET', 'DELETE']:
     except urllib.error.HTTPError as e:
         print(m, e.code, e.read().decode())"
 sleep 2
-kubectl logs -n bookinfo-backends deploy/waypoint --context $KUBECONTEXT_CLUSTER1 --since=1m | grep DELETE
+kubectl logs -n bookinfo-backends deploy/waypoint --context $KUBECONTEXT_CLUSTER1 --since=1m \
+  | grep DELETE | grep -oE '"DELETE [^"]*" [0-9]+ - [a-z_]+\[[^]]*\]'
 ```
 
 Expected output:
 ```
 GET 200
 DELETE 403 RBAC: access denied
-[2026-10-12T23:22:39.138Z] "DELETE /reviews/0 HTTP/1.1" 403 - rbac_access_denied_matched_policy[none] - "-" 0 19 0 - "-" "Python-urllib/3.12" "a325d142-c038-440e-933b-4f588ebfe72f" "reviews.bookinfo-backends:9080" "-" inbound-vip|9080|http|reviews.bookinfo-backends.svc.cluster.local - 10.109.243.178:9080 10.244.2.83:47130 - default
+"DELETE /reviews/0 HTTP/1.1" 403 - rbac_access_denied_matched_policy[none]
 ```
 
 `rbac_access_denied_matched_policy[none]` means no `ALLOW` rule matched the request. The waypoint rejected it before it reached a reviews pod.
@@ -230,7 +227,7 @@ Expected output:
 
 ### Canary at 20 Percent
 
-Send 20 percent of reviews traffic to `reviews-stable`:
+Send 20 percent of reviews traffic to `reviews-stable`. The `parentRefs` entry is the `reviews` Service, not a Gateway. This attaches the route to the waypoint, and callers keep using `reviews:9080`:
 ```bash
 kubectl apply --context $KUBECONTEXT_CLUSTER1 -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
@@ -264,8 +261,6 @@ Expected output (the split varies from run to run):
 ```
 
 ![](../images/waypoints-3.png)
-
-The `parentRefs` entry is the `reviews` Service, not a Gateway. That is how an `HTTPRoute` attaches to a waypoint: every request for the Service goes through the waypoint, and the waypoint applies the route. Callers keep using `reviews:9080` as before.
 
 Complete the rollout by sending all traffic to `reviews-stable`:
 ```bash
@@ -416,8 +411,6 @@ Expected output (the split varies from run to run):
 
 ![](../images/waypoints-6.png)
 
-> **Injected aborts are not retried.** Envoy applies fault injection before it routes the request, so an injected `503` goes straight back to the caller. A retry policy on the same route does not change the result. To test retries, break a real upstream, as in the next section.
-
 Remove the fault:
 ```bash
 kubectl delete virtualservice reviews-fault -n bookinfo-backends --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
@@ -425,7 +418,7 @@ kubectl delete virtualservice reviews-fault -n bookinfo-backends --context $KUBE
 
 ## Absorb a Broken Replica with Retries
 
-A retry policy helps when one replica is broken and the others are healthy. Add a broken replica to the `reviews` Service: a pod with the `app=reviews` and `version=v1` labels that does not listen on port `9080`. It has no readiness probe, so Kubernetes adds it to the Service endpoints:
+A retry policy helps when one replica is broken and the others are healthy. Injected aborts skip retries, so this section breaks a real replica instead. Add a broken replica to the `reviews` Service: a pod with the `app=reviews` and `version=v1` labels that does not listen on port `9080`. It has no readiness probe, so Kubernetes adds it to the Service endpoints:
 ```bash
 kubectl apply --context $KUBECONTEXT_CLUSTER1 -f - <<EOF
 apiVersion: apps/v1

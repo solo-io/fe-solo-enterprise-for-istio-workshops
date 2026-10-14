@@ -28,7 +28,7 @@ export KUBECONTEXT_CLUSTER3=cluster3  # Replace with your actual kubectl context
 export MESH_NAME_CLUSTER3=cluster3    # Recommended to keep as cluster3 for POC
 export KUBECONTEXT_CLUSTER4=cluster4  # Replace with your actual kubectl context name
 export MESH_NAME_CLUSTER4=cluster4    # Recommended to keep as cluster4 for POC
-[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
+[ -n "$INGRESS_ADDR" ] || echo "WARNING: INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
 ```
 
 > **KinD users:** KinD automatically prefixes kubecontext names with `kind-`. You can set `KUBECONTEXT_CLUSTER3=kind-<cluster-name>` but keep `MESH_NAME_CLUSTER3=<cluster-name>` (without the `kind-` prefix). The mesh name is the Istio network name and trust domain prefix, and the policies in this lab match on it.
@@ -36,7 +36,7 @@ export MESH_NAME_CLUSTER4=cluster4    # Recommended to keep as cluster4 for POC
 Export your Solo Trial License Key and the Istio version. Lab `018` rolled the mesh back to 1.28, so the new clusters join at the same version
 ```bash
 export SOLO_TRIAL_LICENSE_KEY=<paste-your-key>
-[ -n "$SOLO_TRIAL_LICENSE_KEY" ] || echo "⚠️  SOLO_TRIAL_LICENSE_KEY is not set. Istio installs with an empty license and enterprise features, including multicluster peering, then fail."
+[ -n "$SOLO_TRIAL_LICENSE_KEY" ] || echo "WARNING: SOLO_TRIAL_LICENSE_KEY is not set. Istio installs with an empty license and enterprise features, including multicluster peering, then fail."
 export ISTIO_VERSION=1.28.10-patch0
 ```
 
@@ -49,7 +49,7 @@ export EW_XDS_NODEPORT=31512
 export PEER_NODE_SELECTOR=node-role.kubernetes.io/control-plane
 ```
 
-Every block below loops over two lists. Each entry is `<kubectl context>=<mesh name>`. To add a fifth cluster later, append it to `NEW_CLUSTERS` and rebuild `ALL_CLUSTERS`:
+Every block below loops over two lists, in the `<kubectl context>=<mesh name>` format from lab `007`. To add a fifth cluster later, append it to `NEW_CLUSTERS` and rebuild `ALL_CLUSTERS`:
 ```bash
 NEW_CLUSTERS=("$KUBECONTEXT_CLUSTER3=$MESH_NAME_CLUSTER3" "$KUBECONTEXT_CLUSTER4=$MESH_NAME_CLUSTER4")
 ALL_CLUSTERS=("$KUBECONTEXT_CLUSTER1=$MESH_NAME_CLUSTER1" "$KUBECONTEXT_CLUSTER2=$MESH_NAME_CLUSTER2" "${NEW_CLUSTERS[@]}")
@@ -64,8 +64,6 @@ cluster3=cluster3
 cluster4=cluster4
 ```
 
-`${entry%%=*}` reads the context from an entry and `${entry#*=}` reads the mesh name. Both work in bash and zsh.
-
 ## Background
 
 Each cluster holds one `istio-remote-peer-<peer>` Gateway for every other cluster, all in its `peering-remote` release, so the number of Gateways grows with the number of ordered pairs:
@@ -77,7 +75,7 @@ Each cluster holds one `istio-remote-peer-<peer>` Gateway for every other cluste
 | 4 | 12 | 3 | 12 |
 | N | N × (N - 1) | N - 1 | N × (N - 1) |
 
-Each remote-peer Gateway holds one node address of its peer (lab `013`). In a four-cluster mesh, replacing the node behind that address in one cluster drops the xDS link in the three other clusters. The new clusters use the same fixed NodePorts as cluster1 and cluster2, and this lab checks every direction through the firewall before it peers them.
+Each remote-peer Gateway holds one node address of its peer (lab `013`). The new clusters use the same fixed NodePorts as cluster1 and cluster2, and this lab checks every direction through the firewall before it peers them.
 
 Traffic still enters through agentgateway in cluster1. The new clusters run no ingress gateway: they serve the global `productpage` service and its backends.
 
@@ -90,14 +88,14 @@ kubectl config get-contexts
 
 If the new contexts are missing, merge their kubeconfig files with your current one:
 ```bash
-KUBECONFIG=~/.kube/config:/path/to/cluster3-kubeconfig.yaml:/path/to/cluster4-kubeconfig.yaml kubectl config view --flatten > /tmp/merged-kubeconfig.yaml
+KUBECONFIG=${KUBECONFIG:-$HOME/.kube/config}:/path/to/cluster3-kubeconfig.yaml:/path/to/cluster4-kubeconfig.yaml kubectl config view --flatten > /tmp/merged-kubeconfig.yaml
 export KUBECONFIG=/tmp/merged-kubeconfig.yaml
 kubectl config get-contexts
 ```
 
 ## Install Istio on the New Clusters
 
-The function below runs the install steps from lab `002` for one cluster: the shared root of trust, the network label, the Gateway API CRDs, istio-cni, istiod with peering enabled, and ztunnel. The values match lab `002`, with the context and mesh name as arguments.
+The `install_istio` function runs the install steps from lab `002` for one cluster: the shared root of trust, the network label, the Gateway API CRDs, istio-cni, istiod with peering enabled, and ztunnel. The values match lab `002`, with the context and mesh name as arguments. Define it:
 
 > **GKE only:** apply `gke/resourcequota.yaml` to each new cluster and uncomment `platform: gke` in the istio-cni values, as in lab `002`.
 
@@ -107,7 +105,7 @@ install_istio() {
   kubectl create namespace istio-system --context $CTX --dry-run=client -o yaml | kubectl apply --context $CTX -f -
   kubectl apply -f shared-root-trust-secret.yaml --context $CTX
 
-  helm upgrade --kube-context $CTX --install istio-base oci://us-docker.pkg.dev/soloio-img/istio-helm/base -n istio-system --version $ISTIO_VERSION-solo --create-namespace
+  helm upgrade --kube-context $CTX --install istio-base oci://us-docker.pkg.dev/soloio-img/istio-helm/base -n istio-system --version $ISTIO_VERSION-solo --create-namespace | grep -E "^STATUS"
   kubectl label namespace istio-system topology.istio.io/network=$MESH --overwrite --context $CTX
 
   kubectl get crd gateways.gateway.networking.k8s.io --context $CTX &> /dev/null || \
@@ -116,7 +114,7 @@ install_istio() {
   helm upgrade --kube-context $CTX --install istio-cni oci://us-docker.pkg.dev/soloio-img/istio-helm/cni \
   -n istio-system \
   --version=$ISTIO_VERSION-solo \
-  -f -<<EOF
+  -f -<<EOF | grep -E "^STATUS"
 profile: ambient
 ambient:
   dnsCapture: true
@@ -135,7 +133,7 @@ EOF
   helm upgrade --kube-context $CTX --install istiod oci://us-docker.pkg.dev/soloio-img/istio-helm/istiod \
   -n istio-system \
   --version=$ISTIO_VERSION-solo \
-  -f -<<EOF
+  -f -<<EOF | grep -E "^STATUS"
 profile: ambient
 global:
   hub: us-docker.pkg.dev/soloio-img/istio
@@ -160,7 +158,7 @@ EOF
   helm upgrade --kube-context $CTX --install ztunnel oci://us-docker.pkg.dev/soloio-img/istio-helm/ztunnel \
   -n istio-system \
   --version=$ISTIO_VERSION-solo \
-  -f -<<EOF
+  -f -<<EOF | grep -E "^STATUS"
 profile: ambient
 logLevel: info
 global:
@@ -181,7 +179,10 @@ multiCluster:
 EOF
   kubectl rollout status ds/ztunnel -n istio-system --watch --timeout=90s --context $CTX
 }
+```
 
+Install Istio in both new clusters:
+```bash
 for entry in "${NEW_CLUSTERS[@]}"; do
   install_istio "${entry%%=*}" "${entry#*=}"
 done
@@ -231,20 +232,18 @@ for entry in "${NEW_CLUSTERS[@]}"; do
 done
 ```
 
-Check that the workloads use HBONE
+Check that the six Bookinfo workloads in each new cluster use HBONE
 ```bash
-./solo-istioctl zc workloads -n istio-system --context $KUBECONTEXT_CLUSTER3 | grep -E "NAMESPACE|bookinfo"
+for entry in "${NEW_CLUSTERS[@]}"; do
+  ./solo-istioctl zc workloads -n istio-system --context "${entry%%=*}" \
+    | awk -v ctx="${entry%%=*}" '/^bookinfo/ { n++; if ($NF == "HBONE") h++ } END { print ctx ": " h+0 "/" n+0 " Bookinfo workloads on HBONE" }'
+done
 ```
 
 Expected output:
 ```
-NAMESPACE          POD NAME                                ADDRESS     NODE     WAYPOINT PROTOCOL
-bookinfo-backends  details-v1-74658b4f9b-fxpx9             10.244.2.6  worker-1 None     HBONE
-bookinfo-backends  ratings-v1-5d896f87b-4qj5s              10.244.2.7  worker-1 None     HBONE
-bookinfo-backends  reviews-v1-55c4fbfdb6-9vcq7             10.244.2.11 worker-1 None     HBONE
-bookinfo-backends  reviews-v2-787cd95cc4-bmhn2             10.244.2.13 worker-1 None     HBONE
-bookinfo-backends  reviews-v3-74b6cbdd46-v88vf             10.244.2.12 worker-1 None     HBONE
-bookinfo-frontends productpage-v1-59c74584cf-zlc2k         10.244.2.5  worker-1 None     HBONE
+cluster3: 6/6 Bookinfo workloads on HBONE
+cluster4: 6/6 Bookinfo workloads on HBONE
 ```
 
 ## Create the East-West Gateways
@@ -277,7 +276,10 @@ eastwest:
 remote:
   create: false
 EOF
-  until kubectl get deploy istio-eastwest -n istio-gateways --context "${entry%%=*}" &>/dev/null; do sleep 2; done
+  for i in $(seq 1 30); do
+    kubectl get deploy istio-eastwest -n istio-gateways --context "${entry%%=*}" &>/dev/null && break
+    sleep 2
+  done
   kubectl rollout status deploy/istio-eastwest -n istio-gateways --watch --timeout=90s --context "${entry%%=*}"
 done
 ```
@@ -347,61 +349,21 @@ for src in "${ALL_CLUSTERS[@]}"; do
     [ "$src" = "$dst" ] && continue
     check_reach "${src%%=*}" "${dst%%=*}"
   done
-done
+done | grep -v '^OK' || echo "PASS: every peer node answers on the xDS and HBONE NodePorts"
 ```
 
-Expected output (abridged; addresses differ on your machine):
+Expected output:
 ```
-OK    cluster1 -> cluster2 172.30.0.4:31512
-OK    cluster1 -> cluster2 172.30.0.4:31508
-OK    cluster1 -> cluster2 172.30.0.5:31508
-OK    cluster1 -> cluster3 172.30.0.6:31512
-OK    cluster1 -> cluster3 172.30.0.6:31508
-OK    cluster1 -> cluster3 172.30.0.7:31508
-...
-OK    cluster4 -> cluster3 172.30.0.6:31512
-OK    cluster4 -> cluster3 172.30.0.6:31508
-OK    cluster4 -> cluster3 172.30.0.7:31508
+PASS: every peer node answers on the xDS and HBONE NodePorts
 ```
 
-With two nodes per cluster, the full output has 36 lines: the xDS port and two HBONE ports for each of the twelve directions. Fix every `FAIL` line before you peer: it names the source cluster, the destination node and the port to open.
+The loop prints only the probes that failed. Fix every `FAIL` line before you peer: it names the source cluster, the destination node and the port to open.
 
 ## Peer the Four Clusters
 
-The `apply_remote_peers` function from lab `007` is repeated here so this lab works in a new shell:
+Load `apply_remote_peers` from lab `007` and run it in every cluster. With four entries in `ALL_CLUSTERS`, each `peering-remote` release gets three remote peers: the releases in cluster1 and cluster2 gain two peers each, and cluster3 and cluster4 get new releases:
 ```bash
-apply_remote_peers() {
-  local LOCAL_CTX=$1 entry ADDR ITEMS=""
-  for entry in "${ALL_CLUSTERS[@]}"; do
-    [ "${entry%%=*}" = "$LOCAL_CTX" ] && continue
-    ADDR=$(kubectl get nodes -l "$PEER_NODE_SELECTOR" --context "${entry%%=*}" \
-      -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null)
-    if [ -z "$ADDR" ]; then
-      echo "No node in ${entry%%=*} matches PEER_NODE_SELECTOR=$PEER_NODE_SELECTOR"
-      return 1
-    fi
-    echo "istio-remote-peer-${entry#*=} in $LOCAL_CTX: xDS $ADDR:$EW_XDS_NODEPORT"
-    ITEMS="$ITEMS
-  - cluster: ${entry#*=}
-    network: ${entry#*=}
-    trustDomain: ${entry#*=}.local
-    address: $ADDR
-    nodeport: $EW_XDS_NODEPORT
-    preferredDataplaneServiceType: nodeport"
-  done
-  helm upgrade --install peering-remote oci://us-docker.pkg.dev/soloio-img/istio-helm/peering \
-    --version $PEERING_CHART_VERSION-solo -n istio-gateways --kube-context $LOCAL_CTX -f - <<EOF | grep -E "^STATUS"
-eastwest:
-  create: false
-remote:
-  create: true
-  items:$ITEMS
-EOF
-}
-```
-
-Run it in every cluster. With four entries in `ALL_CLUSTERS`, each `peering-remote` release gets three remote peers: the releases in cluster1 and cluster2 gain two peers each, and cluster3 and cluster4 get new releases:
-```bash
+source peering/peering.sh
 for entry in "${ALL_CLUSTERS[@]}"; do
   apply_remote_peers "${entry%%=*}"
 done
@@ -439,7 +401,7 @@ cluster4: istio-remote-peer-cluster1 istio-remote-peer-cluster2 istio-remote-pee
 
 Check the peering from all four sides
 ```bash
-./solo-istioctl multicluster check --contexts="$KUBECONTEXT_CLUSTER1,$KUBECONTEXT_CLUSTER2,$KUBECONTEXT_CLUSTER3,$KUBECONTEXT_CLUSTER4" 2>&1 | grep -A3 "Peers Check"
+./solo-istioctl multicluster check --contexts="$KUBECONTEXT_CLUSTER1,$KUBECONTEXT_CLUSTER2,$KUBECONTEXT_CLUSTER3,$KUBECONTEXT_CLUSTER4" 2>&1 | grep -A3 "Peers Check" | grep -v "^--$"
 ```
 
 Expected output (abridged; addresses differ on your machine):
@@ -448,7 +410,6 @@ Expected output (abridged; addresses differ on your machine):
      ✅ Connected to cluster2 via 172.30.0.4
      ✅ Connected to cluster3 via 172.30.0.6
      ✅ Connected to cluster4 via 172.30.0.8
---
 ✅ Peers Check: all clusters connected
      ✅ Connected to cluster1 via 172.30.0.2
      ✅ Connected to cluster3 via 172.30.0.6
@@ -456,41 +417,18 @@ Expected output (abridged; addresses differ on your machine):
 ...
 ```
 
-Each of the four blocks lists the other three clusters.
-
 ## Apply the Policy Baseline on the New Clusters
 
-cluster1 and cluster2 run the lab `008` baseline and the lab `009` waypoints. A new cluster starts with none of it, so any workload that shares the root CA can reach its Bookinfo pods. Apply the same baseline before the new clusters serve the global service:
+cluster1 and cluster2 run the lab `008` baseline and the lab `009` waypoints. A new cluster starts with none of it, so any workload that shares the root CA can reach its Bookinfo pods. Apply the same baseline before the new clusters serve the global service. `auth-policy/strict-mtls.yaml` is the lab `008` PeerAuthentication and `bookinfo/waypoint.yaml` is the lab `009` waypoint:
 ```bash
 for entry in "${NEW_CLUSTERS[@]}"; do
   CTX=${entry%%=*}
-  kubectl apply --context $CTX -f - <<EOF
-apiVersion: security.istio.io/v1
-kind: PeerAuthentication
-metadata:
-  name: default
-  namespace: istio-system
-spec:
-  mtls:
-    mode: STRICT
-EOF
-  kubectl apply -f auth-policy/allow-nothing.yaml -f auth-policy/productpage-auth.yaml --context $CTX
-  kubectl apply --context $CTX -f - <<EOF
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: waypoint
-  namespace: bookinfo-backends
-spec:
-  gatewayClassName: istio-waypoint
-  listeners:
-  - name: mesh
-    port: 15008
-    protocol: HBONE
-    allowedRoutes:
-      namespaces:
-        from: All
-EOF
+  kubectl apply -f auth-policy/strict-mtls.yaml -f auth-policy/allow-nothing.yaml -f auth-policy/productpage-auth.yaml --context $CTX
+  kubectl apply -f bookinfo/waypoint.yaml --context $CTX
+  for i in $(seq 1 30); do
+    kubectl get deploy waypoint -n bookinfo-backends --context $CTX &>/dev/null && break
+    sleep 2
+  done
   kubectl rollout status deploy/waypoint -n bookinfo-backends --watch --timeout=90s --context $CTX
   kubectl label namespace bookinfo-backends istio.io/use-waypoint=waypoint --overwrite --context $CTX
   kubectl apply -f auth-policy/waypoint-auth.yaml --context $CTX
@@ -507,7 +445,10 @@ for entry in "${NEW_CLUSTERS[@]}"; do
   kubectl --context "${entry%%=*}" -n bookinfo-frontends label service productpage solo.io/service-scope=global --overwrite
   kubectl --context "${entry%%=*}" -n bookinfo-frontends annotate service productpage networking.istio.io/traffic-distribution=PreferNetwork --overwrite
 done
-sleep 5
+for i in $(seq 1 15); do
+  ./solo-istioctl zc services -n istio-system --context $KUBECONTEXT_CLUSTER1 | grep -q "autogen.bookinfo-frontends.productpage .* 4/4" && break
+  sleep 2
+done
 ./solo-istioctl zc services -n istio-system --context $KUBECONTEXT_CLUSTER1 | grep -E "NAMESPACE|autogen.bookinfo"
 ```
 
@@ -533,7 +474,7 @@ autogen.node.cluster3.cluster3.5d71fd96 172.30.0.6
 autogen.node.cluster4.cluster4.70ee1a83 172.30.0.8
 ```
 
-The first entry is the local east-west gateway at its ClusterIP. Each peer has a network gateway hostname, backed by the peer nodes that its istiod lists, here the node that runs its east-west pod. ztunnel sends HBONE to that node on the HBONE NodePort `31508`.
+Each peer appears as a network gateway backed by the node that runs its east-west pod. ztunnel sends HBONE to that node on `31508`.
 
 ## Fail Over Across Four Clusters
 
@@ -552,6 +493,8 @@ Expected output (counts vary):
    7 cluster2
 ```
 
+If you skipped labs `008` and `009`, every request returns a complete page. Skip to the step that scales productpage to zero in cluster2 and cluster3.
+
 With no local productpage, `PreferNetwork` spreads requests across the three remote clusters. cluster2 serves complete pages. The requests that reach cluster3 and cluster4 render productpage, but without details or reviews. Call details from productpage in cluster3 to see why:
 ```bash
 kubectl exec deploy/productpage-v1 -n bookinfo-frontends --context $KUBECONTEXT_CLUSTER3 -- python3 -c "
@@ -565,7 +508,7 @@ Expected output:
 403 RBAC: access denied
 ```
 
-The cluster3 waypoint denied the call. `details-waypoint-auth` lists the productpage identity in `cluster1.local` and `cluster2.local` only, and productpage in cluster3 runs as `cluster3.local/ns/bookinfo-frontends/sa/bookinfo-productpage`. Lab `008` lists the trust domains on purpose, so an identity from another trust domain that shares the root CA is denied. In exchange, you add every new cluster's trust domain to every policy, in every cluster.
+The cluster3 waypoint denied the call: `details-waypoint-auth` allows productpage only from `cluster1.local` and `cluster2.local`, and productpage in cluster3 runs as `cluster3.local/ns/bookinfo-frontends/sa/bookinfo-productpage`. Lab `008` lists trust domains on purpose, so every new cluster's trust domain must be added to every policy.
 
 ## Extend the Policies to the New Trust Domains
 
@@ -598,7 +541,7 @@ Expected output:
         - cluster4.local/ns/agentgateway-system/sa/ingress
 ```
 
-Apply the extended policies in all four clusters, so every cluster accepts the same identities. Bookinfo backends are local to each cluster today. Once a backend service is global, a call from productpage in cluster3 can land in cluster1 with a `cluster3.local` identity:
+Apply the extended policies in all four clusters, so every cluster accepts the same identities:
 ```bash
 for entry in "${ALL_CLUSTERS[@]}"; do
   extend_trust_domains auth-policy/productpage-auth.yaml | kubectl apply --context "${entry%%=*}" -f -
@@ -647,7 +590,10 @@ for CTX in $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2 $KUBECONTEXT_CLUSTER3; do
   kubectl scale deploy/productpage-v1 -n bookinfo-frontends --replicas 1 --context $CTX
   kubectl rollout status deploy/productpage-v1 -n bookinfo-frontends --watch --timeout=90s --context $CTX
 done
-sleep 5
+for i in $(seq 1 15); do
+  [ "$(curl -s http://$INGRESS_ADDR/productpage | grep -oE 'cluster[0-9]+' | head -1)" = cluster1 ] && break
+  sleep 2
+done
 for i in $(seq 1 10); do
   curl -s http://$INGRESS_ADDR/productpage | grep -oE "cluster[0-9]+|Error fetching product details" | head -1
 done | sort | uniq -c
@@ -660,62 +606,27 @@ Expected output:
 
 ## Check Drift Across Every Pair
 
-The `check_peer_drift` function from lab `013` is repeated here. Run it for all twelve remote-peer Gateways:
+Run `check_peer_drift` from lab `013`, loaded from `peering/peering.sh`, for all twelve remote-peer Gateways. The loop prints only the Gateways that drifted:
 ```bash
-check_peer_drift() {
-  local LOCAL_CTX=$1 PEER_CTX=$2 PEER_MESH=$3 GW WANT_XDS HAVE_XDS PEER_NODE_IPS ADDR CONNECTED STATUS=OK
-  GW=istio-remote-peer-$PEER_MESH
-  WANT_XDS=$(kubectl get svc istio-eastwest -n istio-gateways --context $PEER_CTX -o jsonpath='{.spec.ports[?(@.port==15012)].nodePort}')
-  HAVE_XDS=$(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.listeners[?(@.name=="xds-tls")].port}')
-  ADDR=$(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.addresses[0].value}')
-  CONNECTED=$(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.status.conditions[?(@.type=="gloo.solo.io/PeerConnected")].status}')
-  PEER_NODE_IPS=" $(kubectl get nodes --context $PEER_CTX -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address} {end}')"
-  if [ "$WANT_XDS" != "$HAVE_XDS" ]; then
-    echo "DRIFT  $LOCAL_CTX/$GW: xDS port $HAVE_XDS, $PEER_CTX xDS NodePort is $WANT_XDS"
-    STATUS=DRIFT
-  fi
-  case "$PEER_NODE_IPS" in
-    *" $ADDR "*) ;;
-    *) echo "DRIFT  $LOCAL_CTX/$GW: address $ADDR is not a node in $PEER_CTX"; STATUS=DRIFT ;;
-  esac
-  if [ "$CONNECTED" != "True" ]; then
-    echo "DRIFT  $LOCAL_CTX/$GW: PeerConnected=$CONNECTED"
-    STATUS=DRIFT
-  fi
-  [ $STATUS = OK ] && echo "OK     $LOCAL_CTX/$GW: $ADDR:$HAVE_XDS connected"
-  [ $STATUS = OK ]
-}
-
+source peering/peering.sh
 for local in "${ALL_CLUSTERS[@]}"; do
   for peer in "${ALL_CLUSTERS[@]}"; do
     [ "$local" = "$peer" ] && continue
     check_peer_drift "${local%%=*}" "${peer%%=*}" "${peer#*=}"
   done
-done
+done | grep -v '^OK' || echo "PASS: every remote-peer Gateway matches its peer"
 ```
 
-Expected output (addresses differ on your machine):
+Expected output:
 ```
-OK     cluster1/istio-remote-peer-cluster2: 172.30.0.4:31512 connected
-OK     cluster1/istio-remote-peer-cluster3: 172.30.0.6:31512 connected
-OK     cluster1/istio-remote-peer-cluster4: 172.30.0.8:31512 connected
-OK     cluster2/istio-remote-peer-cluster1: 172.30.0.2:31512 connected
-...
-OK     cluster4/istio-remote-peer-cluster2: 172.30.0.4:31512 connected
-OK     cluster4/istio-remote-peer-cluster3: 172.30.0.6:31512 connected
+PASS: every remote-peer Gateway matches its peer
 ```
 
-Run this loop on a schedule. When the control-plane node of cluster3 is replaced, it reports `DRIFT` for three Gateways, one in each cluster that peers with cluster3, and the `apply_remote_peers` loop above repairs all three.
-
-| Lifecycle event | Two clusters | Four clusters |
-|---|---|---|
-| The xDS address node in one cluster is replaced | 1 peer loses its xDS link | 3 peers lose their xDS link, one in each other cluster |
-| A fifth cluster joins | | 8 new Gateways from one run of the all-clusters loop: 4 in the new cluster, 1 in each existing cluster. Add its trust domain to every policy in all five clusters |
-| An upgrade (lab `018`) | Drift check for 2 Gateways first | Drift check for 12 Gateways first, then upgrade one cluster at a time |
+Run this loop on a schedule. When the control-plane node of cluster3 is replaced, it reports `DRIFT` for three Gateways, one in each cluster that peers with cluster3, and the `apply_remote_peers` loop above repairs all three. Before an upgrade (lab `018`), run it for all twelve Gateways, then upgrade one cluster at a time.
 
 ## Cleanup
 
-Remove the probe pods, and take cluster3 and cluster4 out of the mesh. Move traffic off them first, as lab `013` describes. Then uninstall their `peering-remote` releases, run `apply_remote_peers` in cluster1 and cluster2 with the two-cluster list, and put the two-cluster policies back in cluster1 and cluster2:
+Remove the probe pods, and take cluster3 and cluster4 out of the mesh. Traffic already prefers cluster1. Uninstall their `peering-remote` releases, run `apply_remote_peers` in cluster1 and cluster2 with the two-cluster list, and put the two-cluster policies back in cluster1 and cluster2:
 ```bash
 for entry in "${ALL_CLUSTERS[@]}"; do
   kubectl delete pod reach-probe -n default --context "${entry%%=*}" --ignore-not-found
@@ -724,13 +635,17 @@ for entry in "${NEW_CLUSTERS[@]}"; do
   helm uninstall peering-remote -n istio-gateways --kube-context "${entry%%=*}"
 done
 ALL_CLUSTERS=("$KUBECONTEXT_CLUSTER1=$MESH_NAME_CLUSTER1" "$KUBECONTEXT_CLUSTER2=$MESH_NAME_CLUSTER2")
+source peering/peering.sh
 for entry in "${ALL_CLUSTERS[@]}"; do
   apply_remote_peers "${entry%%=*}"
 done
 for CTX in $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2; do
   kubectl apply -f auth-policy/productpage-auth.yaml -f auth-policy/waypoint-auth.yaml --context $CTX
 done
-sleep 5
+for i in $(seq 1 15); do
+  ./solo-istioctl zc services -n istio-system --context $KUBECONTEXT_CLUSTER1 | grep -q "autogen.bookinfo-frontends.productpage .* 2/2" && break
+  sleep 2
+done
 ./solo-istioctl zc services -n istio-system --context $KUBECONTEXT_CLUSTER1 | grep -E "NAMESPACE|autogen.bookinfo"
 ```
 

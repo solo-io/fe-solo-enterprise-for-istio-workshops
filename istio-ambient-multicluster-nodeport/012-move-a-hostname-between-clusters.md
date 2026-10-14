@@ -14,7 +14,7 @@ Ensure the following environment variables are set:
 ```bash
 export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context name
 export KUBECONTEXT_CLUSTER2=cluster2  # Replace with your actual kubectl context name
-[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
+[ -n "$INGRESS_ADDR" ] || echo "WARNING: INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
 ```
 
 ## Background
@@ -56,15 +56,16 @@ spec:
 EOF
 done
 sleep 3
-kubectl get serviceentry -n istio-system --context $KUBECONTEXT_CLUSTER1 | grep -E "NAME|productpage"
+kubectl get serviceentry -n istio-system --context $KUBECONTEXT_CLUSTER1 \
+  -o custom-columns=NAME:.metadata.name,HOSTS:.spec.hosts | grep -E "NAME|productpage"
 ```
 
 Expected output:
 ```
-NAME                                              HOSTS                                                       LOCATION        RESOLUTION   AGE
-autogen.bookinfo-frontends.productpage            ["productpage.bookinfo-frontends.mesh.internal"]            MESH_INTERNAL   STATIC       6h31m
-autogen.bookinfo-frontends.productpage-cluster1   ["productpage-cluster1.bookinfo-frontends.mesh.internal"]   MESH_INTERNAL   STATIC       3s
-autogen.bookinfo-frontends.productpage-cluster2   ["productpage-cluster2.bookinfo-frontends.mesh.internal"]   MESH_INTERNAL   STATIC       3s
+NAME                                              HOSTS
+autogen.bookinfo-frontends.productpage            [productpage.bookinfo-frontends.mesh.internal]
+autogen.bookinfo-frontends.productpage-cluster1   [productpage-cluster1.bookinfo-frontends.mesh.internal]
+autogen.bookinfo-frontends.productpage-cluster2   [productpage-cluster2.bookinfo-frontends.mesh.internal]
 ```
 
 ## Serve the Customer Hostname from cluster1
@@ -147,6 +148,7 @@ sleep 20; set_weights 10 90
 sleep 20; set_weights 0 100
 wait $LOAD_PID
 cat canary-report.txt
+echo "== final split"
 count_clusters
 ```
 
@@ -163,10 +165,11 @@ Bytes Out     [total, mean]                     0, 0.00
 Success       [ratio]                           100.00%
 Status Codes  [code:count]                      200:1600  
 Error Set:
+== final split
   20 cluster2
 ```
 
-All 1600 requests succeeded while the hostname moved from cluster1 to cluster2. The client kept the same hostname, and DNS, certificates and client configuration stayed the same. Rolling back is the same patch in reverse.
+All 1600 requests succeeded while the hostname moved from cluster1 to cluster2. Rolling back is the same patch in reverse.
 
 > **No Vegeta?** Run `count_clusters` after each `set_weights` call instead. You see the split move, but not the success ratio under load.
 
@@ -182,7 +185,7 @@ curl -s -H "Host: bookinfo.example.com" -w " (%{http_code})\n" http://$INGRESS_A
 
 Expected output:
 ```
-no healthy upstream (503)
+no healthy backends (503)
 ```
 
 cluster1 still runs a healthy productpage, but the route does not use it. A weight of `0` removes a backend completely, and Gateway API does not fail over between `backendRefs`. The cluster-specific hostnames are for the move only.
@@ -217,7 +220,7 @@ Expected output:
   20 cluster1
 ```
 
-The request succeeds again, served by cluster1, because the global hostname fails over to the remaining cluster. Bring cluster2 back:
+All requests succeed again, served by cluster1, because the global hostname fails over to the remaining cluster. Bring cluster2 back:
 ```bash
 kubectl scale deploy/productpage-v1 -n bookinfo-frontends --replicas 1 --context $KUBECONTEXT_CLUSTER2
 kubectl rollout status deploy/productpage-v1 -n bookinfo-frontends --watch --timeout=90s --context $KUBECONTEXT_CLUSTER2

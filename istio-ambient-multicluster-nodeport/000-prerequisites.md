@@ -2,10 +2,10 @@
 1. A valid Solo.io license key, exported as `$SOLO_TRIAL_LICENSE_KEY`
 2. solo-istioctl installed ([Solo istioCTL installation](000-tools.md#solos-istioctl-binary))
 3. helm installed
-4. A kubernetes version >1.29
+4. Kubernetes 1.29 or later
 5. `openssl` available in your shell. Lab `002` uses it to generate the shared root trust CA. macOS and Linux include it by default. Windows users must use WSL or Git Bash.
 6. Vegeta for load generation ([Vegeta installation](000-tools.md#vegeta-cli-load-generator)). Labs `012` and `018` use it
-7. `curl` with HTTPS support and `openssl` on your shell host (lab `014` verifies certificates with both)
+7. `curl` with HTTPS support (lab `014` verifies certificates with `curl` and `openssl`)
 8. Access to `github.com` release downloads (lab `017` downloads the `ingress2gateway` binary)
 9. Two more Kubernetes clusters, `cluster3` and `cluster4` (lab `019` only)
 

@@ -1,5 +1,23 @@
 # Changelog
 
+0.0.6 - (10-13-26)
+---
+- Tighten every `istio-ambient-multicluster-nodeport` lab, and validate all of them end to end on four two-node clusters:
+  - Remove test-environment and maintainer wording from the labs, `000-introduction.md` and `000-tools.md`
+  - Replace guessed `sleep` waits and unbounded `until` loops with bounded polls that report failure
+  - Filter verification output down to the fields each step checks, and end long check loops with one PASS line
+  - Recapture expected output that no longer matched its command, in labs `004`, `007`, `010`, `012`, `015` and `016`
+  - Cut repeated explanations, including the lab `002` notes repeated in lab `003`
+- Fix lab steps:
+  - `000`: export the license key before the expiry check
+  - `001`: wait for the `reviews` rollout, and check productpage with a `200` instead of a blocking port-forward
+  - `008`: read the quarantine logs from when the quarantine starts
+  - `012`: show the agentgateway `no healthy backends` response
+  - `014`: support the port-forward fallback with `INGRESS_TLS_PORT`
+  - `016`: show the probe's DNS error
+- Add `peering/peering.sh` with `apply_remote_peers` and `check_peer_drift`, which labs `007`, `013`, `018` and `019` now source instead of repeating
+- Add `auth-policy/strict-mtls.yaml` and `bookinfo/waypoint.yaml` for lab `019`
+
 0.0.5 - (10-13-26)
 ---
 - Switch `istio-ambient-multicluster-nodeport` peering to Solo's `peering` Helm chart `1.29.7-patch0-solo` with its NodePort data plane (beta), on Istio `1.28.10-patch0-solo`

@@ -11,6 +11,7 @@
 - This lab assumes you have completed setup from labs `000-012`
 - The monitoring stack from lab `011` is running. This lab uses the cluster2 Prometheus agent as a cross-cluster client
 - The east-west gateway pod in cluster1 can move to a second schedulable node
+- Run the commands from the workshop directory, so that `source peering/peering.sh` finds the peering helpers
 
 Ensure the following environment variables are set:
 ```bash
@@ -65,7 +66,7 @@ peer_gateway_nodes() {
 }
 EW_NODE=$(kubectl get pods -n istio-gateways -l gateway.networking.k8s.io/gateway-name=istio-eastwest --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.items[0].spec.nodeName}')
 echo "cluster1 east-west pod on $EW_NODE ($(kubectl get node $EW_NODE --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}'))"
-echo "cluster2 sends HBONE to: $(peer_gateway_nodes)"
+echo "cluster2 sends HBONE to: $(peer_gateway_nodes | tr '\n' ' ')"
 ```
 
 Expected output (names and addresses differ on your machine):
@@ -74,7 +75,7 @@ cluster1 east-west pod on cluster1 (172.30.0.2)
 cluster2 sends HBONE to: 172.30.0.2 172.30.0.3
 ```
 
-The list can hold more nodes than the one that runs the east-west pod. istiod lists every node that runs a pod with a `gateway.networking.k8s.io/gateway-name` label, and every Gateway API gateway pod has one: the east-west gateway, the agentgateway `ingress` pod and the waypoints. HBONE sent to a node without an east-west pod still arrives, because `svc/istio-eastwest` uses `externalTrafficPolicy: Cluster`: kube-proxy on that node forwards the connection to the east-west pod, one node hop away. With `Local`, cross-cluster requests that ztunnel sends to a listed ingress or waypoint node fail.
+The list can hold more nodes than the east-west pod's node. istiod lists every node that runs a Gateway API gateway pod: the east-west gateway, the agentgateway `ingress` pod and the waypoints. kube-proxy on each of those nodes forwards HBONE to the east-west pod, as lab `007` showed for xDS.
 
 Move the east-west pod: cordon its node, restart the gateway, and uncordon the node. Then wait until cluster2 lists the new node, for up to 60 seconds:
 ```bash
@@ -104,43 +105,22 @@ cluster2 sends HBONE to: 172.30.0.2 172.30.0.3
 Prometheus Server is Ready.
 ```
 
-istiod in cluster2 learned the new node from cluster1 within seconds, and nothing in cluster2 changed by hand. A node leaves the list when cluster1's istiod stops reporting it. In this run `172.30.0.2` stayed, because it runs the agentgateway `ingress` pod, another Gateway API gateway pod.
+istiod in cluster2 learned the new node from cluster1 within seconds, and nothing in cluster2 changed by hand. A node leaves the list when cluster1's istiod stops reporting it. In the example output, `172.30.0.2` stays, because it runs the agentgateway `ingress` pod, another Gateway API gateway pod.
 
 > **Only one schedulable node?** The rollout waits with the new pod `Pending`. Uncordon the node with `kubectl uncordon $EW_NODE --context $KUBECONTEXT_CLUSTER1` and skip to the next section.
 
 ## Check for Drift
 
-The function below compares one remote-peer Gateway with the live state of its peer. It checks that the `xds-tls` port equals the peer's xDS NodePort, that the address is still a node in the peer cluster, and that `PeerConnected` is `True`. It prints `OK` or one `DRIFT` line per problem, and returns a non-zero code on drift, so you can run it from a scheduled job and alert on failure:
+`peering/peering.sh` holds the peering helpers: `apply_remote_peers` from lab `007`, and `check_peer_drift`, which compares one remote-peer Gateway with the live state of its peer. It checks that the `xds-tls` port equals the peer's xDS NodePort, that the address is still a node in the peer cluster, and that `PeerConnected` is `True`. It prints `OK` or one `DRIFT` line per problem, and returns a non-zero code on drift, so you can run it from a scheduled job and alert on failure. Load the file, print the function, and run it for both directions:
 ```bash
-check_peer_drift() {
-  local LOCAL_CTX=$1 PEER_CTX=$2 PEER_MESH=$3 GW WANT_XDS HAVE_XDS PEER_NODE_IPS ADDR CONNECTED STATUS=OK
-  GW=istio-remote-peer-$PEER_MESH
-  WANT_XDS=$(kubectl get svc istio-eastwest -n istio-gateways --context $PEER_CTX -o jsonpath='{.spec.ports[?(@.port==15012)].nodePort}')
-  HAVE_XDS=$(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.listeners[?(@.name=="xds-tls")].port}')
-  ADDR=$(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.addresses[0].value}')
-  CONNECTED=$(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.status.conditions[?(@.type=="gloo.solo.io/PeerConnected")].status}')
-  PEER_NODE_IPS=" $(kubectl get nodes --context $PEER_CTX -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address} {end}')"
-  if [ "$WANT_XDS" != "$HAVE_XDS" ]; then
-    echo "DRIFT  $LOCAL_CTX/$GW: xDS port $HAVE_XDS, $PEER_CTX xDS NodePort is $WANT_XDS"
-    STATUS=DRIFT
-  fi
-  case "$PEER_NODE_IPS" in
-    *" $ADDR "*) ;;
-    *) echo "DRIFT  $LOCAL_CTX/$GW: address $ADDR is not a node in $PEER_CTX"; STATUS=DRIFT ;;
-  esac
-  if [ "$CONNECTED" != "True" ]; then
-    echo "DRIFT  $LOCAL_CTX/$GW: PeerConnected=$CONNECTED"
-    STATUS=DRIFT
-  fi
-  [ $STATUS = OK ] && echo "OK     $LOCAL_CTX/$GW: $ADDR:$HAVE_XDS connected"
-  [ $STATUS = OK ]
-}
+source peering/peering.sh
+sed -n '/^check_peer_drift()/,/^}/p' peering/peering.sh
 
 check_peer_drift $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2 $MESH_NAME_CLUSTER2
 check_peer_drift $KUBECONTEXT_CLUSTER2 $KUBECONTEXT_CLUSTER1 $MESH_NAME_CLUSTER1
 ```
 
-Expected output (addresses differ on your machine):
+Expected output after the function body (addresses differ on your machine):
 ```
 OK     cluster1/istio-remote-peer-cluster2: 172.30.0.4:31512 connected
 OK     cluster2/istio-remote-peer-cluster1: 172.30.0.2:31512 connected
@@ -181,7 +161,10 @@ Prometheus Server is Ready.
 The data plane still works. istiod in cluster2 keeps the last configuration it received from cluster1, and ztunnel keeps sending HBONE to the cluster1 east-west node it knows. Changes in cluster1 stop reaching cluster2. Make one: label the `ratings` Service in cluster1 as global, and compare what the two clusters know about it:
 ```bash
 kubectl label service ratings -n bookinfo-backends solo.io/service-scope=global --context $KUBECONTEXT_CLUSTER1
-sleep 10
+for i in $(seq 1 15); do
+  ./solo-istioctl zc services -n istio-system --context $KUBECONTEXT_CLUSTER1 | grep -q 'autogen.bookinfo-backends.ratings' && break
+  sleep 2
+done
 for CTX in $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2; do
   echo "$CTX: $(./solo-istioctl zc services -n istio-system --context $CTX | grep -c 'autogen.bookinfo-backends.ratings') global ratings service"
 done
@@ -193,47 +176,25 @@ cluster1: 1 global ratings service
 cluster2: 0 global ratings service
 ```
 
-cluster2 has no record of the new global service. The same applies to a cluster1 east-west pod that moves to another node while the link is down: cluster2 keeps sending HBONE to the old node, which works until that node goes away.
+cluster2 has no record of the new global service.
 
 > **A lost xDS link is quiet.** Cross-cluster traffic keeps flowing, so nothing alerts until a change on the far side is missing, or the old east-west node disappears. Run the drift check on a schedule. It reports `PeerConnected=False` as soon as istiod gives up the connection.
 
 ## Repair the Peering
 
-The fix is the `apply_remote_peers` function from lab `007`, run for the cluster whose peer drifted. It reads the peer's node address again. The function is repeated here so this lab works in a new shell:
+The fix is `apply_remote_peers` from `peering/peering.sh`, run for the cluster whose peer drifted. It reads the peer's node address again, upgrades the release, and the loop waits up to 90 seconds for the link:
 ```bash
-apply_remote_peers() {
-  local LOCAL_CTX=$1 entry ADDR ITEMS=""
-  for entry in "${ALL_CLUSTERS[@]}"; do
-    [ "${entry%%=*}" = "$LOCAL_CTX" ] && continue
-    ADDR=$(kubectl get nodes -l "$PEER_NODE_SELECTOR" --context "${entry%%=*}" \
-      -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null)
-    if [ -z "$ADDR" ]; then
-      echo "No node in ${entry%%=*} matches PEER_NODE_SELECTOR=$PEER_NODE_SELECTOR"
-      return 1
-    fi
-    echo "istio-remote-peer-${entry#*=} in $LOCAL_CTX: xDS $ADDR:$EW_XDS_NODEPORT"
-    ITEMS="$ITEMS
-  - cluster: ${entry#*=}
-    network: ${entry#*=}
-    trustDomain: ${entry#*=}.local
-    address: $ADDR
-    nodeport: $EW_XDS_NODEPORT
-    preferredDataplaneServiceType: nodeport"
-  done
-  helm upgrade --install peering-remote oci://us-docker.pkg.dev/soloio-img/istio-helm/peering \
-    --version $PEERING_CHART_VERSION-solo -n istio-gateways --kube-context $LOCAL_CTX -f - <<EOF | grep -E "^STATUS"
-eastwest:
-  create: false
-remote:
-  create: true
-  items:$ITEMS
-EOF
-}
-
+source peering/peering.sh
 apply_remote_peers $KUBECONTEXT_CLUSTER2
-until check_peer_drift $KUBECONTEXT_CLUSTER2 $KUBECONTEXT_CLUSTER1 $MESH_NAME_CLUSTER1 > /dev/null; do sleep 3; done
+for i in $(seq 1 30); do
+  check_peer_drift $KUBECONTEXT_CLUSTER2 $KUBECONTEXT_CLUSTER1 $MESH_NAME_CLUSTER1 > /dev/null && break
+  sleep 3
+done
 check_peer_drift $KUBECONTEXT_CLUSTER2 $KUBECONTEXT_CLUSTER1 $MESH_NAME_CLUSTER1
-sleep 5
+for i in $(seq 1 10); do
+  ./solo-istioctl zc services -n istio-system --context $KUBECONTEXT_CLUSTER2 | grep -q 'autogen.bookinfo-backends.ratings' && break
+  sleep 2
+done
 echo "$KUBECONTEXT_CLUSTER2: $(./solo-istioctl zc services -n istio-system --context $KUBECONTEXT_CLUSTER2 | grep -c 'autogen.bookinfo-backends.ratings') global ratings service"
 ```
 
@@ -256,7 +217,10 @@ Lab `007` fixed the east-west NodePorts through the chart. Delete the cluster1 S
 ```bash
 kubectl get svc istio-eastwest -n istio-gateways --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.spec.ports[*].nodePort}{"\n"}'
 kubectl delete svc istio-eastwest -n istio-gateways --context $KUBECONTEXT_CLUSTER1
-sleep 5
+for i in $(seq 1 15); do
+  kubectl get svc istio-eastwest -n istio-gateways --context $KUBECONTEXT_CLUSTER1 > /dev/null 2>&1 && break
+  sleep 1
+done
 kubectl get svc istio-eastwest -n istio-gateways --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.spec.ports[*].nodePort}{"\n"}'
 check_peer_drift $KUBECONTEXT_CLUSTER2 $KUBECONTEXT_CLUSTER1 $MESH_NAME_CLUSTER1
 ```
@@ -278,9 +242,12 @@ Rebuilding, decommissioning or isolating a cluster starts with unpeering it. Fir
 ./solo-istioctl zc services -n istio-system --context $KUBECONTEXT_CLUSTER1 | grep -E "NAMESPACE|autogen"
 helm uninstall peering-remote -n istio-gateways --kube-context $KUBECONTEXT_CLUSTER1
 helm uninstall peering-remote -n istio-gateways --kube-context $KUBECONTEXT_CLUSTER2
-sleep 10
+for i in $(seq 1 15); do
+  ./solo-istioctl zc services -n istio-system --context $KUBECONTEXT_CLUSTER1 | grep -q 'istio-eastwest.cluster2' || break
+  sleep 2
+done
 ./solo-istioctl zc services -n istio-system --context $KUBECONTEXT_CLUSTER1 | grep -E "NAMESPACE|autogen"
-kubectl get serviceentry -n istio-system --context $KUBECONTEXT_CLUSTER2
+kubectl get serviceentry -n istio-system --context $KUBECONTEXT_CLUSTER2 -o custom-columns=NAME:.metadata.name --no-headers
 probe_cluster2_to_cluster1
 ```
 
@@ -295,21 +262,23 @@ release "peering-remote" uninstalled
 NAMESPACE           SERVICE NAME                             SERVICE VIP           WAYPOINT ENDPOINTS
 bookinfo-frontends  autogen.bookinfo-frontends.productpage   240.240.0.2,2001:2::2 None     1/1
 monitoring          autogen.monitoring.prometheus            240.240.0.5,2001:2::5 None     1/1
-NAME                                     HOSTS                                              LOCATION        RESOLUTION   AGE
-autogen.bookinfo-frontends.productpage   ["productpage.bookinfo-frontends.mesh.internal"]   MESH_INTERNAL   STATIC       6h40m
+autogen.bookinfo-frontends.productpage
 wget: bad address 'prometheus.monitoring.mesh.internal:9090'
 ```
 
 The global productpage in cluster1 dropped from two endpoints to one, so it no longer has a failover target, and the `autogen.peering.istio-eastwest.cluster2` entry for the cluster2 east-west nodes is gone. cluster2 lost `prometheus.monitoring.mesh.internal` completely, because that service runs only in cluster1. Before you unpeer a cluster, list the global services that exist only on one side: their callers on the other side lose them.
 
-Bring the cluster back. The loop below runs `apply_remote_peers` in every cluster of `ALL_CLUSTERS`, so each cluster gets one remote peer for every other cluster. A new third cluster, installed with labs `002` and `003` and given the `peering-eastwest` release from lab `007`, joins by adding one entry to the list: the next run of the loop adds it as a peer in every release. Lab `019` adds two clusters this way:
+Bring the cluster back. The loop below runs `apply_remote_peers` in every cluster of `ALL_CLUSTERS`, so each cluster gets one remote peer for every other cluster. Lab `019` adds two clusters with the same loop:
 ```bash
 for entry in "${ALL_CLUSTERS[@]}"; do
   apply_remote_peers "${entry%%=*}"
 done
 kubectl wait --for=condition=gloo.solo.io/PeerConnected gateway/istio-remote-peer-$MESH_NAME_CLUSTER2 -n istio-gateways --timeout=120s --context $KUBECONTEXT_CLUSTER1
 kubectl wait --for=condition=gloo.solo.io/PeerConnected gateway/istio-remote-peer-$MESH_NAME_CLUSTER1 -n istio-gateways --timeout=120s --context $KUBECONTEXT_CLUSTER2
-until probe_cluster2_to_cluster1 | grep -q Ready; do sleep 3; done
+for i in $(seq 1 20); do
+  probe_cluster2_to_cluster1 | grep -q Ready && break
+  sleep 3
+done
 ./solo-istioctl zc services -n istio-system --context $KUBECONTEXT_CLUSTER1 | grep -E "NAMESPACE|autogen"
 ```
 
