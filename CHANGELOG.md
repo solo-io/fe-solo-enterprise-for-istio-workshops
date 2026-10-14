@@ -1,5 +1,13 @@
 # Changelog
 
+0.0.7 - (10-14-26)
+---
+- Add `istio-oss-sidecar-to-enterprise-ambient/005-sidecar-ambient-interop.md`
+- Move labs `005`-`010` to `006`-`011` in `istio-oss-sidecar-to-enterprise-ambient`, with every lab-number reference updated
+- Update `006-migrate-namespaces.md` to move only `bookinfo-frontends`, with real `zc workloads` output: the Solo sidecar shows `HBONE`, so the lab tracks `2/2` to `1/1` instead of `TCP` to `HBONE`
+- Update `002-deploy-bookinfo-with-sidecars.md` to list init containers, since Istio injects `istio-proxy` as a native sidecar
+- Update `istio-oss-sidecar-to-enterprise-ambient` `README.md`, `000-introduction.md`, `011-cleanup.md` and `bookinfo/bookinfo-waypoint-services.yaml`, the root `README.md` and the `style-guide.md` example path
+
 0.0.6 - (10-14-26)
 ---
 - Add the Cilium settings ambient needs to `000-prerequisites.md`: `cni.exclusive=false`, `socketLB.hostNamespaceOnly=true`, `bpf.masquerade` off, a config check, and the `169.254.7.127/32` probe policy for clusters with default-deny

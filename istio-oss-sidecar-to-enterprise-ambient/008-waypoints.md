@@ -10,7 +10,7 @@
 ![](../images/waypoints-1.png)
 
 ## Prerequisites
-- This lab assumes you have completed labs `000`–`005`
+- This lab assumes you have completed labs `000`–`006`
 - The `bookinfo-backends` namespace must be enrolled in ambient mesh
 
 Ensure the following environment variables are set:
@@ -65,9 +65,9 @@ All inbound L7 traffic to services in `bookinfo-backends` now flows through this
 
 ## Update the Authorization Policies for the Waypoint
 
-> **Skip this section if you did not complete lab `006`.** It applies only when the access-control policies are in place.
+> **Skip this section if you did not complete lab `007`.** It applies only when the access-control policies are in place.
 
-Adding the waypoint changed the traffic path. Before, `productpage` connected to the `details` pod and ztunnel checked the caller identity on that connection. Now `productpage` connects to the waypoint and the waypoint connects to the pod, so ztunnel sees `bookinfo-backends/sa/waypoint` as the peer. The lab `006` policies match on `bookinfo-frontends/sa/bookinfo-productpage`, which no longer appears on the pod's inbound connection, so every backend call is denied.
+Adding the waypoint changed the traffic path. Before, `productpage` connected to the `details` pod and ztunnel checked the caller identity on that connection. Now `productpage` connects to the waypoint and the waypoint connects to the pod, so ztunnel sees `bookinfo-backends/sa/waypoint` as the peer. The lab `007` policies match on `bookinfo-frontends/sa/bookinfo-productpage`, which no longer appears on the pod's inbound connection, so every backend call is denied.
 
 Reload the page and you will see `Error fetching product details` and `Error fetching product reviews`.
 
@@ -78,7 +78,7 @@ kubectl apply -f auth-policy/waypoint-auth.yaml --context $KUBECONTEXT_CLUSTER1
 
 The `selector` policies now allow only the waypoint to deliver traffic to a pod, which also stops a caller from bypassing the waypoint and reaching the pod directly. The `targetRefs` policies carry the identity rules and run on the waypoint, which terminates the caller's mTLS connection and can read the original caller identity.
 
-Resist the shortcut of adding `*/ns/bookinfo-backends/sa/waypoint` to the lab `006` policies. It restores the page, and it also makes every backend pod trust anything the waypoint forwards, so any workload in the mesh can reach any backend.
+Resist the shortcut of adding `*/ns/bookinfo-backends/sa/waypoint` to the lab `007` policies. It restores the page, and it also makes every backend pod trust anything the waypoint forwards, so any workload in the mesh can reach any backend.
 
 Confirm the page renders again, then check that the rules still hold:
 ```bash
@@ -113,7 +113,7 @@ EOF
 
 ## L7 Authorization Policy
 
-Lab `006` used L4 authorization via ztunnel — policies that allow or deny based on workload identity (SPIFFE). Because ztunnel operates at L4, it cannot inspect HTTP attributes such as method or path.
+Lab `007` used L4 authorization via ztunnel — policies that allow or deny based on workload identity (SPIFFE). Because ztunnel operates at L4, it cannot inspect HTTP attributes such as method or path.
 
 With a waypoint in place, you can enforce at the HTTP level. Apply an L7 `AuthorizationPolicy` that restricts the `reviews` service to only allow `GET` requests:
 ```bash
@@ -510,7 +510,7 @@ kubectl label namespace bookinfo-backends istio.io/use-waypoint- --context $KUBE
 kubectl delete gateway waypoint -n bookinfo-backends --context $KUBECONTEXT_CLUSTER1
 ```
 
-Removing the waypoint puts callers back on the direct path, so restore the lab `006` policies too. Skip this if you did not complete lab `006`:
+Removing the waypoint puts callers back on the direct path, so restore the lab `007` policies too. Skip this if you did not complete lab `007`:
 ```bash
 kubectl delete authorizationpolicy details-waypoint-auth reviews-waypoint-auth ratings-waypoint-auth \
   -n bookinfo-backends --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
@@ -529,4 +529,4 @@ At this point we have completed the following objectives:
 - Injected delays and HTTP aborts to simulate upstream failures
 - Absorbed a broken replica with retries
 
-In the next step `008` we will inspect mesh metrics using the Istio observability endpoints.
+In the next step `009` we will inspect mesh metrics using the Istio observability endpoints.

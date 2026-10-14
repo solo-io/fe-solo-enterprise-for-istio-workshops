@@ -13,7 +13,7 @@ Hands-on workshops for deploying and operating **Solo Enterprise for Istio** wit
 | [`istio-ambient-multicluster-on-openshift`](istio-ambient-multicluster-on-openshift/) | OpenShift | 2 | Ambient mesh across two OpenShift clusters — multicluster routing, global service discovery, failover, segments, global aliases, zero-trust access control, egress, waypoints, observability, Solo Management UI. |
 | [`istio-ambient-multicluster`](istio-ambient-multicluster/) | Standard Kubernetes | 2 | Ambient mesh across two standard Kubernetes clusters — multicluster routing, global service discovery, failover, segments, global aliases, zero-trust access control, egress, waypoints, observability, Solo Management UI, cross-cluster gRPC load balancing, service migration between clusters with service takeover. |
 | [`istio-ambient-multicluster-nodeport`](istio-ambient-multicluster-nodeport/) | Standard Kubernetes | 2 (4 in lab `019`) | Ambient mesh across two standard Kubernetes clusters peered through NodePort east-west gateways with no LoadBalancer, using Solo's `peering` Helm chart and its NodePort data plane, with Solo Enterprise for agentgateway as the ingress gateway. Multicluster routing, global service discovery, failover, zero trust with workload quarantine, waypoints, east-west data path measurement, metrics federation, hostname migration between clusters, peering lifecycle, cert-manager certificates, client source IP, egress with stable IPs, ingress-nginx migration, upgrade and rollback, and adding two clusters for a four-cluster mesh. |
-| [`istio-oss-sidecar-to-enterprise-ambient`](istio-oss-sidecar-to-enterprise-ambient/) | Standard Kubernetes | 1 | In-place migration from OSS Istio sidecar to Solo Enterprise Ambient, ingress, egress, waypoints, observability, zero-trust access control |
+| [`istio-oss-sidecar-to-enterprise-ambient`](istio-oss-sidecar-to-enterprise-ambient/) | Standard Kubernetes | 1 | In-place migration from OSS Istio sidecar to Solo Enterprise Ambient, one namespace at a time with sidecar and ambient waypoint interop, ingress, egress, waypoints, observability, zero-trust access control |
 
 ## Reference
 
@@ -28,6 +28,7 @@ Hands-on workshops for deploying and operating **Solo Enterprise for Istio** wit
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | Sidecars | | ✓ | | | | |
 | Migration | | ✓ | | | | |
+| Sidecar and ambient interop (sidecar and ingress to waypoint) | | ✓ | | | | |
 | Zero Trust (mTLS) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Ingress | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Ingress with agentgateway | | | | ✓ | | |

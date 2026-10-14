@@ -1,16 +1,17 @@
 # Migrate Namespaces from Sidecar to Ambient
 
 # Objectives
-- Validate current workload status shows sidecar (TCP, `2/2` pods)
-- Remove sidecar injection labels from bookinfo namespaces
-- Enable ambient mode on bookinfo namespaces
-- Restart pods to remove sidecar containers
-- Validate workloads now show ambient (HBONE, `1/1` pods)
+- Validate the mixed state left by lab `005`: `bookinfo-backends` on ambient (`1/1`), `productpage` on its sidecar (`2/2`)
+- Remove the sidecar injection label from `bookinfo-frontends`
+- Enable ambient mode on `bookinfo-frontends`
+- Restart `productpage` to remove its sidecar container
+- Validate every bookinfo workload now shows ambient (HBONE, `1/1` pods)
 - Confirm the application is still accessible
 
 ## Prerequisites
-- This lab assumes you have completed labs `001`–`004`
+- This lab assumes you have completed labs `001`–`005`
 - Solo Istio Ambient is installed (istiod, istio-cni, ztunnel all running)
+- `bookinfo-backends` is already in ambient mode (lab `005`)
 
 Ensure the following environment variables are set:
 ```bash
@@ -19,24 +20,26 @@ export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context
 
 ## Pre-Migration Check
 
-Before migrating, confirm the bookinfo workloads are still using sidecar mode. The `zc workloads` command shows the protocol each workload is using:
+Before migrating, confirm the starting point. Lab `005` moved `bookinfo-backends` to ambient and left `productpage` on its sidecar. The `zc workloads` command lists the workloads ztunnel knows about:
 
 ```bash
-./solo-istioctl zc workloads -n istio-system --context $KUBECONTEXT_CLUSTER1 | grep "bookinfo"
+./solo-istioctl zc workloads -n istio-system --context $KUBECONTEXT_CLUSTER1 | grep -E "NAMESPACE|bookinfo"
 ```
 
-Expected output — `PROTOCOL=TCP` means workloads are not yet in ambient (they are still using sidecar Envoy for mTLS):
+Expected output:
 ```
-NAMESPACE            POD NAME                              ADDRESS      NODE    WAYPOINT PROTOCOL
-bookinfo-backends    details-v1-<hash>                     10.x.x.x     ...     None     TCP
-bookinfo-backends    ratings-v1-<hash>                     10.x.x.x     ...     None     TCP
-bookinfo-backends    reviews-v1-<hash>                     10.x.x.x     ...     None     TCP
-bookinfo-backends    reviews-v2-<hash>                     10.x.x.x     ...     None     TCP
-bookinfo-backends    reviews-v3-<hash>                     10.x.x.x     ...     None     TCP
-bookinfo-frontends   productpage-v1-<hash>                 10.x.x.x     ...     None     TCP
+NAMESPACE          POD NAME                                ADDRESS     NODE     WAYPOINT PROTOCOL NETWORK NETWORK GATEWAY
+bookinfo-backends  details-v1-56b7f5bf87-d4x22             10.244.1.20 worker-1 None     HBONE    N/A     None
+bookinfo-backends  ratings-v1-5bd9df64f9-n69qh             10.244.1.21 worker-1 None     HBONE    N/A     None
+bookinfo-backends  reviews-v1-7ccf676fc9-6dvhx             10.244.1.22 worker-1 None     HBONE    N/A     None
+bookinfo-backends  reviews-v2-56c65cd477-plzqp             10.244.1.23 worker-1 None     HBONE    N/A     None
+bookinfo-backends  reviews-v3-7b7c687b47-7chfq             10.244.1.24 worker-1 None     HBONE    N/A     None
+bookinfo-frontends productpage-v1-68687694-28z56           10.244.1.18 worker-1 None     HBONE    N/A     None
 ```
 
-Also confirm pods currently show `2/2 READY` (app + sidecar):
+`productpage` shows `HBONE` although it still has a sidecar. Lab `005` restarted it onto the Solo proxy, which speaks HBONE to ambient workloads. The `PROTOCOL` column stays `HBONE` through this lab, so watch the `READY` column instead.
+
+Also confirm `productpage` still shows `2/2 READY` (app + sidecar) and the backends show `1/1`:
 ```bash
 kubectl get pods -n bookinfo-frontends --context $KUBECONTEXT_CLUSTER1
 kubectl get pods -n bookinfo-backends --context $KUBECONTEXT_CLUSTER1
@@ -44,46 +47,38 @@ kubectl get pods -n bookinfo-backends --context $KUBECONTEXT_CLUSTER1
 
 ## Step 1 — Remove Sidecar Injection Labels
 
-Remove the `istio-injection=enabled` label from both namespaces. This stops new pods from receiving sidecar injection, but does **not** affect currently running pods:
+Remove the `istio-injection=enabled` label from `bookinfo-frontends`. This stops new pods from receiving sidecar injection, but does **not** affect currently running pods:
 
 ```bash
 kubectl label namespace bookinfo-frontends istio-injection- --context $KUBECONTEXT_CLUSTER1
-kubectl label namespace bookinfo-backends istio-injection- --context $KUBECONTEXT_CLUSTER1
 ```
 
 Verify the label is removed:
 ```bash
-kubectl get namespace bookinfo-frontends bookinfo-backends --show-labels --context $KUBECONTEXT_CLUSTER1
+kubectl get namespace bookinfo-frontends --show-labels --context $KUBECONTEXT_CLUSTER1
 ```
 
 ## Step 2 — Enable Ambient Mode
 
-Label both namespaces for ambient enrollment. ztunnel will begin intercepting and securing traffic for any new pods in these namespaces:
+Label `bookinfo-frontends` for ambient enrollment. ztunnel will begin intercepting and securing traffic for any new pods in the namespace:
 
 ```bash
 kubectl label namespace bookinfo-frontends istio.io/dataplane-mode=ambient --context $KUBECONTEXT_CLUSTER1
-kubectl label namespace bookinfo-backends istio.io/dataplane-mode=ambient --context $KUBECONTEXT_CLUSTER1
 ```
 
 ## Step 3 — Restart Pods to Remove Sidecars
 
-The currently running pods still have the Envoy sidecar container — they were injected before the label change. Restart all deployments to get fresh pods without sidecars:
+The running `productpage` pod still has the Envoy sidecar container. It was injected before the label change. Restart the deployments to get fresh pods without sidecars:
 
 ```bash
 kubectl rollout restart deployment -n bookinfo-frontends --context $KUBECONTEXT_CLUSTER1
-kubectl rollout restart deployment -n bookinfo-backends --context $KUBECONTEXT_CLUSTER1
 ```
 
-Wait for all deployments to complete the rollout:
+Wait for the rollout to complete:
 ```bash
 for deploy in $(kubectl get deploy -n bookinfo-frontends --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.items[*].metadata.name}'); do
   echo "Waiting for frontend deployment '$deploy'..."
   kubectl rollout status deploy/"$deploy" -n bookinfo-frontends --watch --timeout=90s --context $KUBECONTEXT_CLUSTER1
-done
-
-for deploy in $(kubectl get deploy -n bookinfo-backends --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.items[*].metadata.name}'); do
-  echo "Waiting for backend deployment '$deploy'..."
-  kubectl rollout status deploy/"$deploy" -n bookinfo-backends --watch --timeout=90s --context $KUBECONTEXT_CLUSTER1
 done
 ```
 
@@ -102,27 +97,27 @@ NAME                             READY   STATUS    RESTARTS   AGE
 productpage-v1-<hash>            1/1     Running   0          30s
 
 NAME                             READY   STATUS    RESTARTS   AGE
-details-v1-<hash>                1/1     Running   0          30s
-ratings-v1-<hash>                1/1     Running   0          30s
-reviews-v1-<hash>                1/1     Running   0          30s
-reviews-v2-<hash>                1/1     Running   0          30s
-reviews-v3-<hash>                1/1     Running   0          30s
+details-v1-<hash>                1/1     Running   0          20m
+ratings-v1-<hash>                1/1     Running   0          20m
+reviews-v1-<hash>                1/1     Running   0          20m
+reviews-v2-<hash>                1/1     Running   0          20m
+reviews-v3-<hash>                1/1     Running   0          20m
 ```
 
 Now check the workload protocol with `solo-istioctl`:
 ```bash
-./solo-istioctl zc workloads -n istio-system --context $KUBECONTEXT_CLUSTER1 | grep "bookinfo"
+./solo-istioctl zc workloads -n istio-system --context $KUBECONTEXT_CLUSTER1 | grep -E "NAMESPACE|bookinfo"
 ```
 
-Expected output — `PROTOCOL=HBONE` confirms workloads are enrolled in ambient mesh and mTLS is active via ztunnel:
+Expected output. The new `productpage` pod is on ztunnel, so every bookinfo workload is now in ambient:
 ```
-NAMESPACE            POD NAME                              ADDRESS      NODE    WAYPOINT PROTOCOL
-bookinfo-backends    details-v1-<hash>                     10.x.x.x     ...     None     HBONE
-bookinfo-backends    ratings-v1-<hash>                     10.x.x.x     ...     None     HBONE
-bookinfo-backends    reviews-v1-<hash>                     10.x.x.x     ...     None     HBONE
-bookinfo-backends    reviews-v2-<hash>                     10.x.x.x     ...     None     HBONE
-bookinfo-backends    reviews-v3-<hash>                     10.x.x.x     ...     None     HBONE
-bookinfo-frontends   productpage-v1-<hash>                 10.x.x.x     ...     None     HBONE
+NAMESPACE          POD NAME                                ADDRESS     NODE     WAYPOINT PROTOCOL NETWORK NETWORK GATEWAY
+bookinfo-backends  details-v1-56b7f5bf87-d4x22             10.244.1.20 worker-1 None     HBONE    N/A     None
+bookinfo-backends  ratings-v1-5bd9df64f9-n69qh             10.244.1.21 worker-1 None     HBONE    N/A     None
+bookinfo-backends  reviews-v1-7ccf676fc9-6dvhx             10.244.1.22 worker-1 None     HBONE    N/A     None
+bookinfo-backends  reviews-v2-56c65cd477-plzqp             10.244.1.23 worker-1 None     HBONE    N/A     None
+bookinfo-backends  reviews-v3-7b7c687b47-7chfq             10.244.1.24 worker-1 None     HBONE    N/A     None
+bookinfo-frontends productpage-v1-6f78d6645b-wtchb         10.244.1.26 worker-1 None     HBONE    N/A     None
 ```
 
 `HBONE` (HTTP-Based Overlay Network Encapsulation) is the ambient mTLS tunnel protocol used by ztunnel. This confirms that all pod-to-pod traffic is now encrypted via ztunnel — no sidecar required.
@@ -196,17 +191,18 @@ The Bookinfo application should respond normally. The migration from sidecar to 
 |---|---|---|
 | **Pod readiness** | `2/2` (app + sidecar) | `1/1` (app only) |
 | **mTLS enforcement** | Per-pod Envoy sidecar | Node-level ztunnel DaemonSet |
-| **Protocol** | TCP (sidecar handles mTLS) | HBONE (ztunnel handles mTLS) |
+| **Protocol** | TCP with the community sidecar, HBONE with the Solo sidecar from lab `005` | HBONE (ztunnel handles mTLS) |
 | **Namespace label** | `istio-injection=enabled` | `istio.io/dataplane-mode=ambient` |
 | **Resource overhead** | Envoy per pod | Shared ztunnel per node |
 
 ## Next Steps
 
 At this point we have completed the following objectives:
-- Removed sidecar injection labels from bookinfo namespaces
-- Enabled ambient mode on bookinfo namespaces
-- Restarted pods — now showing `1/1 READY` (no sidecar)
+- Confirmed the mixed sidecar and ambient state left by lab `005`
+- Removed the sidecar injection label from `bookinfo-frontends`
+- Enabled ambient mode on `bookinfo-frontends`
+- Restarted `productpage`, which now shows `1/1 READY` (no sidecar)
 - Confirmed HBONE protocol via `solo-istioctl zc workloads`
 - Validated the application is still accessible
 
-**Phase 2 (Migration) is complete.** In the next step `006` we will establish zero-trust access control using Istio AuthorizationPolicy enforced by ztunnel.
+**Phase 2 (Migration) is complete.** In the next step `007` we will establish zero-trust access control using Istio AuthorizationPolicy enforced by ztunnel.

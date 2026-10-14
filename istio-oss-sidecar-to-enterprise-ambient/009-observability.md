@@ -5,7 +5,7 @@
 - Inspect istiod metrics to observe control plane health
 
 ## Prerequisites
-- This lab assumes you have completed labs `000`–`005`
+- This lab assumes you have completed labs `000`–`006`
 - Bookinfo namespaces are enrolled in ambient mesh (pods show `1/1 READY`, HBONE protocol)
 
 Ensure the following environment variables are set:
@@ -128,4 +128,4 @@ At this point we have completed the following objectives:
 - Inspected ztunnel metrics to observe L4 mTLS connections and L7 HTTP request telemetry
 - Inspected istiod metrics to observe control plane config push activity and proxy convergence latency
 
-In the next step `009` we will configure egress control with a waypoint.
+In the next step `010` we will configure egress control with a waypoint.
