@@ -222,7 +222,7 @@ Ambient keeps east-west traffic direct between enrolled workloads. Traffic still
 
 Cross-namespace calls and calls across mTLS policy boundaries do not add a hop. Namespaces and `AuthorizationPolicy` change what is allowed, not the path.
 
-> **Running on Cilium with kube-proxy replacement?** Cilium's eBPF load balancer replaces kube-proxy for path 1. Paths 2 to 5 stay the same: ztunnel does the Service load balancing for enrolled pods, so it must see the original Service IP. `socketLB.hostNamespaceOnly=true` keeps Cilium's socket load balancer out of pod network namespaces, so the Service IP reaches ztunnel. On Cilium `1.20.2` with KPR, the ztunnel log in this lab shows the same result as with kube-proxy: `dst.service` names the Service and `dst.addr` is the chosen pod on `15008`. Settings: [prerequisites](000-prerequisites.md).
+> **Running on Cilium with kube-proxy replacement?** Cilium's eBPF load balancer replaces kube-proxy for path 1. Paths 2 to 5 stay the same: ztunnel does the Service load balancing for enrolled pods, so it must see the original Service IP. `socketLB.hostNamespaceOnly=true` keeps Cilium's socket load balancer out of pod network namespaces, so the Service IP reaches ztunnel. On Cilium `1.20.2` with KPR, the ztunnel log in this lab shows the same result as with kube-proxy: `dst.service` names the Service and `dst.addr` is the chosen pod on `15008`. Settings: [prerequisites](000-prerequisites.md). Sources: Istio [platform prerequisites for Cilium](https://istio.io/latest/docs/ambient/install/platform-prerequisites/#cilium) and Cilium [Istio integration](https://docs.cilium.io/en/stable/network/servicemesh/istio/).
 
 ## Cleanup
 
