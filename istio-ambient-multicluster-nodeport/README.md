@@ -43,7 +43,7 @@ Hands-on workshop for deploying Solo Enterprise for Istio Ambient Mesh across tw
 | [011-observability.md](011-observability.md) | Lean metrics: central Prometheus, agent-mode Prometheus over the mesh, namespace dashboards |
 | [012-move-a-hostname-between-clusters.md](012-move-a-hostname-between-clusters.md) | Move a stable customer hostname between clusters by route weight, under load |
 | [013-nodeport-peering-lifecycle.md](013-nodeport-peering-lifecycle.md) | Follow the east-west gateway across nodes, detect and repair a lost xDS link, take a cluster out and bring it back |
-| [014-per-hostname-certificates.md](014-per-hostname-certificates.md) | Per-hostname ECDSA P-256 certificates from cert-manager on the ingress gateway |
+| [014-per-hostname-certificates.md](014-per-hostname-certificates.md) | App teams own their hostnames, cert-manager certificates and HTTPS listeners on the shared ingress gateway with `EnterpriseListenerSet` |
 | [015-client-source-ip.md](015-client-source-ip.md) | Keep the real client IP: `externalTrafficPolicy`, PROXY protocol, `X-Forwarded-For` across clusters |
 | [016-egress-with-stable-ips.md](016-egress-with-stable-ips.md) | Egress through a waypoint pinned to egress nodes, with stable source IPs and egress policy |
 | [017-migrate-ingress-nginx.md](017-migrate-ingress-nginx.md) | Convert ingress-nginx and Istio ingress objects to Gateway API for agentgateway with `ingress2gateway`, including capture-group rewrites |

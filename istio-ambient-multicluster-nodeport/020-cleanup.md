@@ -24,9 +24,9 @@ Each add-on lab removes its own resources in its `## Cleanup` section. The loop 
 for CONTEXT in "${CLUSTERS[@]}"; do
   echo "Cleaning up add-on labs in $CONTEXT..."
 
-  # Namespaces: tenant-a (008), perf (010), monitoring (011), cert-manager (014),
+  # Namespaces: tenant-a (008), perf (010), monitoring (011), cert-manager and shop (014),
   # client-ip and outside (015), egress and partner (016), grpc-echo and api-echo (017)
-  kubectl delete namespace tenant-a perf monitoring cert-manager client-ip outside egress partner grpc-echo api-echo \
+  kubectl delete namespace tenant-a perf monitoring cert-manager shop client-ip outside egress partner grpc-echo api-echo \
     --context $CONTEXT --ignore-not-found
 
   # Prometheus RBAC (011)
@@ -97,7 +97,7 @@ Confirm nothing is left:
 
 ```bash
 for CONTEXT in "${CLUSTERS[@]}"; do
-  LEFT=$( { kubectl get ns --context $CONTEXT -o name | grep -E "bookinfo|istio|agentgateway|tenant-a|perf|monitoring|cert-manager|client-ip|outside|egress|partner|grpc-echo|api-echo"
+  LEFT=$( { kubectl get ns --context $CONTEXT -o name | grep -E "bookinfo|istio|agentgateway|tenant-a|perf|monitoring|cert-manager|shop|client-ip|outside|egress|partner|grpc-echo|api-echo"
             helm list -A --kube-context $CONTEXT -q | grep -E "istio|ztunnel|peering|agentgateway|cert-manager"; } | tr '\n' ' ')
   [ -z "$LEFT" ] && echo "$CONTEXT: clean" || echo "$CONTEXT: LEFT $LEFT"
 done
