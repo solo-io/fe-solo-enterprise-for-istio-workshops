@@ -90,7 +90,7 @@ Expected output (addresses differ on your machine):
 dst.addr=10.244.1.42:80	dst.service="ingress.agentgateway-system.svc.cluster.local"	dst.workload="ingress-55cd48866f-8bgcj"
 dst.addr=10.244.1.58:15008	dst.service="echo.perf.svc.cluster.local"	dst.workload="echo-959df6568-vvdv9"
 dst.addr=10.244.1.59:15008	dst.service="echo-l7.perf.svc.cluster.local"	dst.workload="waypoint-5dc9fb8d6-tvc9f"
-dst.addr=172.30.0.4:31115	dst.service="echo-remote.perf.mesh.internal"	dst.workload="NetworkGateway/cluster2/172.30.0.4/31115"
+dst.addr=172.30.0.4:31508	dst.service="echo-remote.perf.mesh.internal"	dst.workload="autogen.node.cluster2.cluster2.4f489252"
 ```
 
 Each line is the first hop that the source ztunnel opened:
@@ -98,7 +98,7 @@ Each line is the first hop that the source ztunnel opened:
 - `echo` goes straight to the `echo` pod IP on `15008`. This is path 2: one HBONE connection from node to node, and nothing in between.
 - `echo-l7` goes to the waypoint pod on `15008`. The waypoint then opens a second HBONE connection to the `echo` pod.
 - `ingress.agentgateway-system` goes to the agentgateway pod on port `80`, not `15008`. agentgateway runs outside ztunnel's capture (lab `005`), so this hop is plaintext. agentgateway then opens HBONE to `echo`. Hairpinning through a gateway adds a proxy hop, and also an unencrypted hop.
-- `echo-remote` goes to `NetworkGateway/cluster2/172.30.0.4/31115`: a cluster2 node IP and the HBONE NodePort from the `istio-remote-peer-cluster2` Gateway in lab `007`.
+- `echo-remote` goes to `autogen.node.cluster2.<node>`, the entry istiod generated for the cluster2 node that runs the east-west pod (lab `007`). ztunnel connects to that node's IP, `172.30.0.4`, on the HBONE NodePort `31508`.
 
 The waypoint's own hop to the `echo` pod does not show up in this log right away. The waypoint keeps a pool of long-lived HBONE connections to its backends, and ztunnel writes a `connection complete` line only when a connection closes. Lab `009` showed that hop from the policy side: the backend pods saw the waypoint's identity, not the caller's.
 
@@ -119,7 +119,7 @@ istio-eastwest-7bbf6d47d-6mjhh   1/1     Running   0          5h51m   10.244.2.5
 
 `src.addr` is the east-west gateway pod, and `src.identity` is still the original cluster1 client. The east-west gateway forwards the inner HBONE stream without terminating its mTLS, so the destination checks policy against the real caller, as lab `008` showed.
 
-> **NodePort adds a kube-proxy hop when the peer address is not the gateway's node.** The remote-peer Gateway points at `172.30.0.4`, the cluster2 control-plane node that lab `007` selects with `PEER_NODE_SELECTOR`, and the east-west pod runs on `worker-1`. kube-proxy on the control-plane node forwards the connection to `worker-1`. That is the trade-off of the control-plane default: stable addresses for one extra node hop. If you unset `PEER_NODE_SELECTOR` in lab `007`, the peer address is the node that runs the east-west pod, `dst.addr` above shows that node's IP, and the extra hop goes away. Lab `013` covers how to keep the peer addresses current.
+> **HBONE goes straight to the east-west gateway's node.** `dst.addr` is the node that runs the cluster2 east-west pod, so kube-proxy on that node delivers the connection to a local pod. The remote-peer Gateway's address, the cluster2 control-plane node from lab `007`, carries only the xDS link between the two istiods. Lab `013` shows how the HBONE address follows the pod when it moves.
 
 ## Measure Each Path
 
@@ -216,7 +216,7 @@ Ambient keeps east-west traffic direct between enrolled workloads. Traffic still
 | Case | What is in the path | Why |
 |---|---|---|
 | A service uses a waypoint | One Envoy hop | You asked for L7 features on that service (lab `009`) |
-| The destination is in another network | The peer cluster's east-west gateway, plus a kube-proxy hop if the peer address is not that gateway's node | Pod IPs are not routable between networks. Every cross-cluster call in this workshop crosses a network |
+| The destination is in another network | The peer cluster's east-west gateway, reached on the node that runs it | Pod IPs are not routable between networks. Every cross-cluster call in this workshop crosses a network |
 | The caller addresses a gateway (hostname or IP) | That gateway | The mesh does not rewrite a destination the caller chose. Redirect the hostname with a `ServiceEntry`, as above |
 | The traffic enters or leaves the mesh | The ingress or egress gateway | North-south traffic is a gateway's job (labs `006` and `016`) |
 | One side is outside the mesh | No ztunnel on that side, and no mTLS | `STRICT` (lab `008`) rejects plaintext into enrolled pods |

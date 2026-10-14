@@ -10,7 +10,7 @@
 ## Prerequisites
 - This lab assumes you have completed setup from labs `000-017`
 - Vegeta is installed: see [000-tools.md](000-tools.md#vegeta-cli-load-generator)
-- The NodePort pins from lab `013` are in place
+- The fixed east-west NodePorts from lab `007` are in place
 
 Ensure the following environment variables are set:
 ```bash
@@ -35,33 +35,35 @@ Solo recommends [in-place upgrades with Helm](https://docs.solo.io/istio/1.30.x/
 | 3 | `istio-cni` | The `istio-cni-node` DaemonSet | New pods on a node wait until the new CNI agent is ready. Running pods are unaffected |
 | 4 | `ztunnel` | The `ztunnel` DaemonSet, one node at a time | Connections through a node's ztunnel close when that ztunnel restarts |
 
-The peered clusters keep working while one runs 1.28 and the other 1.29. The east-west gateways and the remote-peer Gateways stay as they are.
+The peered clusters keep working while one runs 1.28 and the other 1.29. The `peering-eastwest` and `peering-remote` releases from lab `007` stay at the `1.29.7-patch0` chart.
 
 > **Why not `helm upgrade --reuse-values`?** `--reuse-values` keeps the old release's values and skips the new chart's defaults. The 1.29 ztunnel chart reads a value that 1.28 never set, and the upgrade fails with `executing "ztunnel/templates/daemonset.yaml" at <.Values.peerCaCrl.enabled>: nil pointer evaluating interface {}.enabled`. Export the values you set with `helm get values`, change the version in that file, and pass it with `-f`, so the new chart's defaults fill in the rest.
 
 ## Check the Mesh Before You Start
 
-Check the peering from both sides and confirm that the remote-peer Gateways match their peers. A ztunnel or istiod restart re-establishes every peering connection, so an upgrade is when drift from lab `013` would surface. The function is the same `check_peer_drift` from lab `013`:
+Check the peering from both sides and confirm that the remote-peer Gateways match their peers. An istiod restart re-establishes every xDS connection to the peers, so an upgrade is when drift from lab `013` would surface. The function is the same `check_peer_drift` from lab `013`:
 ```bash
 check_peer_drift() {
-  local LOCAL_CTX=$1 PEER_CTX=$2 PEER_MESH=$3 GW WANT_HBONE WANT_XDS HAVE_HBONE HAVE_XDS PEER_NODE_IPS ADDR STATUS=OK
+  local LOCAL_CTX=$1 PEER_CTX=$2 PEER_MESH=$3 GW WANT_XDS HAVE_XDS PEER_NODE_IPS ADDR CONNECTED STATUS=OK
   GW=istio-remote-peer-$PEER_MESH
-  WANT_HBONE=$(kubectl get svc istio-eastwest -n istio-gateways --context $PEER_CTX -o jsonpath='{.spec.ports[?(@.port==15008)].nodePort}')
   WANT_XDS=$(kubectl get svc istio-eastwest -n istio-gateways --context $PEER_CTX -o jsonpath='{.spec.ports[?(@.port==15012)].nodePort}')
-  HAVE_HBONE=$(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.listeners[?(@.name=="cross-network")].port}')
   HAVE_XDS=$(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.listeners[?(@.name=="xds-tls")].port}')
+  ADDR=$(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.addresses[0].value}')
+  CONNECTED=$(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.status.conditions[?(@.type=="gloo.solo.io/PeerConnected")].status}')
   PEER_NODE_IPS=" $(kubectl get nodes --context $PEER_CTX -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address} {end}')"
-  if [ "$WANT_HBONE" != "$HAVE_HBONE" ] || [ "$WANT_XDS" != "$HAVE_XDS" ]; then
-    echo "DRIFT  $LOCAL_CTX/$GW: listener ports $HAVE_HBONE/$HAVE_XDS, $PEER_CTX NodePorts are $WANT_HBONE/$WANT_XDS"
+  if [ "$WANT_XDS" != "$HAVE_XDS" ]; then
+    echo "DRIFT  $LOCAL_CTX/$GW: xDS port $HAVE_XDS, $PEER_CTX xDS NodePort is $WANT_XDS"
     STATUS=DRIFT
   fi
-  for ADDR in $(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.addresses[*].value}'); do
-    case "$PEER_NODE_IPS" in
-      *" $ADDR "*) ;;
-      *) echo "DRIFT  $LOCAL_CTX/$GW: address $ADDR is not a node in $PEER_CTX"; STATUS=DRIFT ;;
-    esac
-  done
-  [ $STATUS = OK ] && echo "OK     $LOCAL_CTX/$GW: $(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.addresses[*].value}') ports $HAVE_HBONE/$HAVE_XDS"
+  case "$PEER_NODE_IPS" in
+    *" $ADDR "*) ;;
+    *) echo "DRIFT  $LOCAL_CTX/$GW: address $ADDR is not a node in $PEER_CTX"; STATUS=DRIFT ;;
+  esac
+  if [ "$CONNECTED" != "True" ]; then
+    echo "DRIFT  $LOCAL_CTX/$GW: PeerConnected=$CONNECTED"
+    STATUS=DRIFT
+  fi
+  [ $STATUS = OK ] && echo "OK     $LOCAL_CTX/$GW: $ADDR:$HAVE_XDS connected"
   [ $STATUS = OK ]
 }
 
@@ -75,8 +77,8 @@ done
 
 Expected output:
 ```
-OK     cluster1/istio-remote-peer-cluster2: 172.30.0.4 ports 31213/32512
-OK     cluster2/istio-remote-peer-cluster1: 172.30.0.2 ports 31377/31106
+OK     cluster1/istio-remote-peer-cluster2: 172.30.0.4:31512 connected
+OK     cluster2/istio-remote-peer-cluster1: 172.30.0.2:31512 connected
 ✅ Peers Check: all clusters connected
      ✅ Connected to cluster2 via 172.30.0.4
 ✅ Peers Check: all clusters connected
@@ -233,14 +235,14 @@ Expected output (the success ratio can be below 100 percent, as above):
    1 pilot:1.29.7-patch0-solo-distroless
    1 proxyv2:1.29.7-patch0-solo-distroless
    3 ztunnel:1.29.7-patch0-solo-distroless
-OK     cluster1/istio-remote-peer-cluster2: 172.30.0.4 ports 31213/32512
-OK     cluster2/istio-remote-peer-cluster1: 172.30.0.2 ports 31377/31106
+OK     cluster1/istio-remote-peer-cluster2: 172.30.0.4:31512 connected
+OK     cluster2/istio-remote-peer-cluster1: 172.30.0.2:31512 connected
 Requests      [total, rate, throughput]         1242, 10.01, 10.01
 Success       [ratio]                           100.00%
 Status Codes  [code:count]                      200:1242  
 ```
 
-Each cluster has three ztunnel-image pods, two node ztunnels and the east-west gateway, and one `proxyv2` pod, the waypoint. The agentgateway pods use their own images, so the list does not show them. The NodePort pins from lab `013` kept the east-west NodePorts unchanged through the upgrade, so the drift check still passes. In this run both upgrades finished with no failed requests.
+Each cluster has three ztunnel-image pods, two node ztunnels and the east-west gateway, and one `proxyv2` pod, the waypoint. The agentgateway pods use their own images, so the list does not show them. The fixed NodePorts from lab `007` kept the xDS ports unchanged through the upgrade, and both peers reconnected to the new istiod, so the drift check still passes. In this run both upgrades finished with no failed requests.
 
 > **New in 1.29: endpoint health metrics.** ztunnel 1.29 exports `istio_outlier_detection_endpoints` and `istio_outlier_detection_endpoints_unhealthy`. They count the endpoints that ztunnel has taken out of rotation, such as the cluster1 productpage pod in lab `008` after policy rejections. Add `istio_outlier_detection_.*` to the lab `011` keep-list to chart them.
 

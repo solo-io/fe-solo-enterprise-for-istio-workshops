@@ -1,5 +1,10 @@
 # Changelog
 
+0.0.5 - (10-13-26)
+---
+- Switch `istio-ambient-multicluster-nodeport` peering to Solo's `peering` Helm chart `1.29.7-patch0-solo` with its NodePort data plane (beta), on Istio `1.28.10-patch0-solo`
+- Update `istio-ambient-multicluster-nodeport` `README.md`, `000-introduction.md`, `000-prerequisites.md` (peering chart, fixed NodePorts) and `000-tools.md`, and the root `README.md`
+
 0.0.4 - (10-13-26)
 ---
 - Add `istio-ambient-multicluster-nodeport/005-install-agentgateway-as-an-ingress-gw.md`: install Solo Enterprise for agentgateway `v2026.9.3` on cluster1 with its Istio integration 

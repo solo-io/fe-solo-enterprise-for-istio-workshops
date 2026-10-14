@@ -2,9 +2,9 @@
 
 # Objectives
 - Install Istio Ambient and Bookinfo on `cluster3` and `cluster4`, reusing the shared root of trust from lab `002`
-- Create the east-west gateways on the new clusters with pinned NodePorts, before they peer
+- Create the east-west gateways on the new clusters from the `peering` chart, with the same fixed NodePorts
 - Check NodePort reachability in every direction between the four clusters
-- Peer the four clusters in a full mesh with one loop
+- Peer the four clusters in a full mesh with one loop over the `peering` chart
 - Copy the lab `008` and `009` policy baseline to the new clusters, and extend every policy to the new trust domains
 - Fail productpage over across four clusters
 - Run the drift check for every pair of clusters
@@ -40,10 +40,13 @@ export SOLO_TRIAL_LICENSE_KEY=<paste-your-key>
 export ISTIO_VERSION=1.28.10-patch0
 ```
 
-Lab `007` points the peers at the control-plane nodes with `PEER_NODE_SELECTOR`. Set it again in this shell. If you unset it in lab `007`, skip the `export` line:
+Set the chart version, the NodePorts and the peer node selector from lab `007`. If you changed any of them in lab `007`, use your values:
 ```bash
+export PEERING_CHART_VERSION=1.29.7-patch0
+export EW_STATUS_NODEPORT=31521
+export EW_HBONE_NODEPORT=31508
+export EW_XDS_NODEPORT=31512
 export PEER_NODE_SELECTOR=node-role.kubernetes.io/control-plane
-echo "PEER_NODE_SELECTOR=${PEER_NODE_SELECTOR:-<unset: peers use the nodes that run an istio-eastwest pod>}"
 ```
 
 Every block below loops over two lists. Each entry is `<kubectl context>=<mesh name>`. To add a fifth cluster later, append it to `NEW_CLUSTERS` and rebuild `ALL_CLUSTERS`:
@@ -65,7 +68,7 @@ cluster4=cluster4
 
 ## Background
 
-Each cluster holds one `istio-remote-peer-<peer>` Gateway for every other cluster, so the number of Gateways grows with the number of ordered pairs:
+Each cluster holds one `istio-remote-peer-<peer>` Gateway for every other cluster, all in its `peering-remote` release, so the number of Gateways grows with the number of ordered pairs:
 
 | Clusters | Remote-peer Gateways in the mesh | Per cluster | Firewall directions to open |
 |---|---|---|---|
@@ -74,7 +77,7 @@ Each cluster holds one `istio-remote-peer-<peer>` Gateway for every other cluste
 | 4 | 12 | 3 | 12 |
 | N | N × (N - 1) | N - 1 | N × (N - 1) |
 
-Each remote-peer Gateway is a copy of the peer's node IPs and NodePorts (lab `013`). In a four-cluster mesh, a replaced node or a recreated east-west Service in one cluster makes three Gateways stale, one in each of the other clusters. This lab adds the clusters in an order that keeps that cost low: it pins the NodePorts before the first peering, and it checks every direction through the firewall before it creates a Gateway.
+Each remote-peer Gateway holds one node address of its peer (lab `013`). In a four-cluster mesh, replacing the node behind that address in one cluster drops the xDS link in the three other clusters. The new clusters use the same fixed NodePorts as cluster1 and cluster2, and this lab checks every direction through the firewall before it peers them.
 
 Traffic still enters through agentgateway in cluster1. The new clusters run no ingress gateway: they serve the global `productpage` service and its backends.
 
@@ -244,53 +247,38 @@ bookinfo-backends  reviews-v3-74b6cbdd46-v88vf             10.244.2.12 worker-1 
 bookinfo-frontends productpage-v1-59c74584cf-zlc2k         10.244.2.5  worker-1 None     HBONE
 ```
 
-## Create the East-West Gateways with Pinned NodePorts
+## Create the East-West Gateways
 
-Lab `013` pinned the NodePorts of cluster1 and cluster2 after they peered. The new clusters pin before their first peering, so no peer ever holds a port that changes later. Each cluster has its own NodePort range, so every cluster can use the same numbers. Reuse the cluster1 values, and the firewall rules you opened for cluster1 cover the new clusters too:
-```bash
-EW_STATUS_PORT=$(kubectl get svc istio-eastwest -n istio-gateways --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.spec.ports[?(@.port==15021)].nodePort}')
-EW_HBONE_PORT=$(kubectl get svc istio-eastwest -n istio-gateways --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.spec.ports[?(@.port==15008)].nodePort}')
-EW_XDS_PORT=$(kubectl get svc istio-eastwest -n istio-gateways --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.spec.ports[?(@.port==15012)].nodePort}')
-echo "status $EW_STATUS_PORT, HBONE $EW_HBONE_PORT, xDS $EW_XDS_PORT"
-```
-
-Expected output (ports differ on your machine):
-```
-status 31767, HBONE 30454, xDS 32110
-```
-
-Create the `istio-eastwest-options` ConfigMap from lab `013` first. Then generate the east-west Gateway with `expose`, add the NodePort annotation as in lab `007`, and add the `parametersRef` to the ConfigMap before you apply it. Istio creates the Service with the pinned ports from the start:
+Install the `peering-eastwest` release in each new cluster, with the values from lab `007`. Every cluster uses the same three NodePorts, so the firewall rules you opened for cluster1 and cluster2 list the same ports for the new clusters:
 ```bash
 for entry in "${NEW_CLUSTERS[@]}"; do
-  CTX=${entry%%=*}
-  kubectl create ns istio-gateways --context $CTX --dry-run=client -o yaml | kubectl apply --context $CTX -f -
-  kubectl apply --context $CTX -f - <<EOF
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: istio-eastwest-options
-  namespace: istio-gateways
-data:
-  service: |
+  helm upgrade --install peering-eastwest oci://us-docker.pkg.dev/soloio-img/istio-helm/peering \
+    --version $PEERING_CHART_VERSION-solo -n istio-gateways --create-namespace \
+    --kube-context "${entry%%=*}" -f - <<EOF | grep -E "^STATUS"
+eastwest:
+  create: true
+  cluster: ${entry#*=}
+  network: ${entry#*=}
+  serviceType: NodePort
+  dataplaneServiceTypes: [nodeport]
+  service:
     spec:
       ports:
-      # Keep Istio's port names: Istio reads the protocol from the tls- prefix
+      # Keep Istio's port names: Istio reads the protocol from the tls- prefix, and the chart requires hbone in one name
       - name: status-port
         port: 15021
-        nodePort: $EW_STATUS_PORT
+        nodePort: $EW_STATUS_NODEPORT
       - name: tls-hbone
         port: 15008
-        nodePort: $EW_HBONE_PORT
+        nodePort: $EW_HBONE_NODEPORT
       - name: tls-xds
         port: 15012
-        nodePort: $EW_XDS_PORT
+        nodePort: $EW_XDS_NODEPORT
+remote:
+  create: false
 EOF
-  ./solo-istioctl multicluster expose --namespace istio-gateways --context $CTX --generate \
-    | kubectl annotate --local -f - networking.istio.io/service-type=NodePort -o yaml \
-    | kubectl patch --local -f - --type=merge -o yaml \
-        -p '{"spec":{"infrastructure":{"parametersRef":{"group":"","kind":"ConfigMap","name":"istio-eastwest-options"}}}}' \
-    | kubectl apply --context $CTX -f -
-  kubectl rollout status deploy/istio-eastwest -n istio-gateways --watch --timeout=90s --context $CTX
+  until kubectl get deploy istio-eastwest -n istio-gateways --context "${entry%%=*}" &>/dev/null; do sleep 2; done
+  kubectl rollout status deploy/istio-eastwest -n istio-gateways --watch --timeout=90s --context "${entry%%=*}"
 done
 ```
 
@@ -301,33 +289,28 @@ for entry in "${ALL_CLUSTERS[@]}"; do
 done
 ```
 
-Expected output (ports differ on your machine):
+Expected output:
 ```
-cluster1: NodePort 31767 30454 32110
-cluster2: NodePort 30757 31600 32633
-cluster3: NodePort 31767 30454 32110
-cluster4: NodePort 31767 30454 32110
+cluster1: NodePort 31521 31508 31512
+cluster2: NodePort 31521 31508 31512
+cluster3: NodePort 31521 31508 31512
+cluster4: NodePort 31521 31508 31512
 ```
 
-> **A pinned port is already taken?** The Service fails to update if another Service in the cluster holds the port. `kubectl get svc -A --context <ctx> | grep <port>` finds the holder. Pick other values for the new clusters and open them in the firewall.
+> **A fixed port is already taken?** The Service fails to update if another Service in the cluster holds the port. `kubectl get svc -A --context <ctx> | grep <port>` finds the holder. Free the port in the new cluster: the remote peers in the other clusters expect the same xDS NodePort everywhere.
 
 ## Check Reachability Between Every Pair
 
 Each direction between two clusters is a separate firewall path, and the four clusters have twelve. A gap in one direction shows up later as failover that works one way only. Check every direction before you peer.
 
-The function below lists the addresses that `apply_remote_peer` will write into a remote-peer Gateway, using the same rule: nodes that match `PEER_NODE_SELECTOR`, or the nodes that run a ready `istio-eastwest` pod when the selector is unset:
+Two kinds of address need to be open in each direction. istiod dials the peer's xDS address, the first node that matches `PEER_NODE_SELECTOR`, on the xDS NodePort. ztunnel sends HBONE to whichever peer node runs the east-west pod, and the pod can move to any node, so every peer node needs the HBONE NodePort open. The functions below list both:
 ```bash
+peer_xds_ip() {
+  kubectl get nodes -l "$PEER_NODE_SELECTOR" --context $1 \
+    -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null
+}
 peer_node_ips() {
-  local PEER_CTX=$1
-  if [ -n "$PEER_NODE_SELECTOR" ]; then
-    kubectl get nodes -l "$PEER_NODE_SELECTOR" --context $PEER_CTX \
-      -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address}{"\n"}{end}'
-  else
-    kubectl get pods -n istio-gateways -l gateway.networking.k8s.io/gateway-name=istio-eastwest \
-      --field-selector=status.phase=Running \
-      --context $PEER_CTX -o jsonpath='{range .items[*]}{.status.hostIP} {.metadata.deletionTimestamp}{"\n"}{end}' \
-      | awk 'NF == 1 { print $1 }'
-  fi | sort -u
+  kubectl get nodes --context $1 -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address}{"\n"}{end}'
 }
 ```
 
@@ -342,20 +325,20 @@ for entry in "${ALL_CLUSTERS[@]}"; do
 done
 ```
 
-Probe the HBONE and xDS NodePorts of every peer address from every other cluster:
+Probe the xDS NodePort of every peer's xDS address and the HBONE NodePort of every peer node, from every other cluster:
 ```bash
+probe_port() {
+  if kubectl exec reach-probe -n default --context $1 -- nc -z -w 3 $3 $4 2>/dev/null; then
+    echo "OK    $1 -> $2 $3:$4"
+  else
+    echo "FAIL  $1 -> $2 $3:$4"
+  fi
+}
 check_reach() {
-  local SRC_CTX=$1 DST_CTX=$2 HBONE_PORT XDS_PORT IP PORT
-  HBONE_PORT=$(kubectl get svc istio-eastwest -n istio-gateways --context $DST_CTX -o jsonpath='{.spec.ports[?(@.port==15008)].nodePort}')
-  XDS_PORT=$(kubectl get svc istio-eastwest -n istio-gateways --context $DST_CTX -o jsonpath='{.spec.ports[?(@.port==15012)].nodePort}')
+  local SRC_CTX=$1 DST_CTX=$2 IP
+  probe_port $SRC_CTX $DST_CTX "$(peer_xds_ip $DST_CTX)" $EW_XDS_NODEPORT
   for IP in $(peer_node_ips $DST_CTX); do
-    for PORT in $HBONE_PORT $XDS_PORT; do
-      if kubectl exec reach-probe -n default --context $SRC_CTX -- nc -z -w 3 $IP $PORT 2>/dev/null; then
-        echo "OK    $SRC_CTX -> $DST_CTX $IP:$PORT"
-      else
-        echo "FAIL  $SRC_CTX -> $DST_CTX $IP:$PORT"
-      fi
-    done
+    probe_port $SRC_CTX $DST_CTX $IP $EW_HBONE_NODEPORT
   done
 }
 
@@ -367,107 +350,79 @@ for src in "${ALL_CLUSTERS[@]}"; do
 done
 ```
 
-Expected output (abridged; addresses and ports differ on your machine):
+Expected output (abridged; addresses differ on your machine):
 ```
-OK    cluster1 -> cluster2 172.30.0.4:31600
-OK    cluster1 -> cluster2 172.30.0.4:32633
-OK    cluster1 -> cluster3 172.30.0.6:30454
-OK    cluster1 -> cluster3 172.30.0.6:32110
-OK    cluster1 -> cluster4 172.30.0.8:30454
-OK    cluster1 -> cluster4 172.30.0.8:32110
-OK    cluster2 -> cluster1 172.30.0.2:30454
-OK    cluster2 -> cluster1 172.30.0.2:32110
+OK    cluster1 -> cluster2 172.30.0.4:31512
+OK    cluster1 -> cluster2 172.30.0.4:31508
+OK    cluster1 -> cluster2 172.30.0.5:31508
+OK    cluster1 -> cluster3 172.30.0.6:31512
+OK    cluster1 -> cluster3 172.30.0.6:31508
+OK    cluster1 -> cluster3 172.30.0.7:31508
 ...
-OK    cluster4 -> cluster3 172.30.0.6:30454
-OK    cluster4 -> cluster3 172.30.0.6:32110
+OK    cluster4 -> cluster3 172.30.0.6:31512
+OK    cluster4 -> cluster3 172.30.0.6:31508
+OK    cluster4 -> cluster3 172.30.0.7:31508
 ```
 
-The full output has 24 lines: two ports for each of the twelve directions. Fix every `FAIL` line before you peer: it names the source cluster, the destination node and the port to open.
+With two nodes per cluster, the full output has 36 lines: the xDS port and two HBONE ports for each of the twelve directions. Fix every `FAIL` line before you peer: it names the source cluster, the destination node and the port to open.
 
 ## Peer the Four Clusters
 
-The `apply_remote_peer` function from lab `007` is repeated here so this lab works in a new shell:
+The `apply_remote_peers` function from lab `007` is repeated here so this lab works in a new shell:
 ```bash
-apply_remote_peer() {
-  local LOCAL_CTX=$1 PEER_CTX=$2 PEER_MESH=$3 HBONE_PORT XDS_PORT PEER_IPS PEER_ADDRESSES
-  HBONE_PORT=$(kubectl get svc istio-eastwest -n istio-gateways --context $PEER_CTX \
-    -o jsonpath='{.spec.ports[?(@.port==15008)].nodePort}')
-  XDS_PORT=$(kubectl get svc istio-eastwest -n istio-gateways --context $PEER_CTX \
-    -o jsonpath='{.spec.ports[?(@.port==15012)].nodePort}')
-  if [ -n "$PEER_NODE_SELECTOR" ]; then
-    PEER_IPS=$(kubectl get nodes -l "$PEER_NODE_SELECTOR" --context $PEER_CTX \
-      -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address}{"\n"}{end}')
-  else
-    PEER_IPS=$(kubectl get pods -n istio-gateways -l gateway.networking.k8s.io/gateway-name=istio-eastwest \
-      --field-selector=status.phase=Running \
-      --context $PEER_CTX -o jsonpath='{range .items[*]}{.status.hostIP} {.metadata.deletionTimestamp}{"\n"}{end}' \
-      | awk 'NF == 1 { print $1 }')
-  fi
-  PEER_ADDRESSES=$(printf '%s\n' "$PEER_IPS" | sort -u \
-    | awk 'NF { printf "  - type: IPAddress\n    value: %s\n", $1 }')
-  if [ -z "$HBONE_PORT" ] || [ -z "$XDS_PORT" ] || [ -z "$PEER_ADDRESSES" ]; then
-    echo "No istio-eastwest NodePorts or peer node addresses found in $PEER_CTX. Finish the steps above in $PEER_CTX first."
-    return 1
-  fi
-  echo "istio-remote-peer-$PEER_MESH in $LOCAL_CTX: HBONE $HBONE_PORT, xDS $XDS_PORT"
-  kubectl apply --context $LOCAL_CTX -f - <<EOF
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: istio-remote-peer-$PEER_MESH
-  namespace: istio-gateways
-  annotations:
-    gateway.istio.io/service-account: istio-eastwest
-    gateway.istio.io/trust-domain: $PEER_MESH.local
-  labels:
-    topology.istio.io/cluster: $PEER_MESH
-    topology.istio.io/network: $PEER_MESH
-spec:
-  gatewayClassName: istio-remote
-  addresses:
-$PEER_ADDRESSES
-  listeners:
-  - name: cross-network
-    port: $HBONE_PORT
-    protocol: HBONE
-    tls:
-      mode: Passthrough
-  - name: xds-tls
-    port: $XDS_PORT
-    protocol: TLS
-    tls:
-      mode: Passthrough
+apply_remote_peers() {
+  local LOCAL_CTX=$1 entry ADDR ITEMS=""
+  for entry in "${ALL_CLUSTERS[@]}"; do
+    [ "${entry%%=*}" = "$LOCAL_CTX" ] && continue
+    ADDR=$(kubectl get nodes -l "$PEER_NODE_SELECTOR" --context "${entry%%=*}" \
+      -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null)
+    if [ -z "$ADDR" ]; then
+      echo "No node in ${entry%%=*} matches PEER_NODE_SELECTOR=$PEER_NODE_SELECTOR"
+      return 1
+    fi
+    echo "istio-remote-peer-${entry#*=} in $LOCAL_CTX: xDS $ADDR:$EW_XDS_NODEPORT"
+    ITEMS="$ITEMS
+  - cluster: ${entry#*=}
+    network: ${entry#*=}
+    trustDomain: ${entry#*=}.local
+    address: $ADDR
+    nodeport: $EW_XDS_NODEPORT
+    preferredDataplaneServiceType: nodeport"
+  done
+  helm upgrade --install peering-remote oci://us-docker.pkg.dev/soloio-img/istio-helm/peering \
+    --version $PEERING_CHART_VERSION-solo -n istio-gateways --kube-context $LOCAL_CTX -f - <<EOF | grep -E "^STATUS"
+eastwest:
+  create: false
+remote:
+  create: true
+  items:$ITEMS
 EOF
 }
 ```
 
-Apply a remote-peer Gateway for every ordered pair. The loop creates the ten new Gateways. It also re-applies the two that cluster1 and cluster2 already hold, with the same addresses and ports:
+Run it in every cluster. With four entries in `ALL_CLUSTERS`, each `peering-remote` release gets three remote peers: the releases in cluster1 and cluster2 gain two peers each, and cluster3 and cluster4 get new releases:
 ```bash
-for local in "${ALL_CLUSTERS[@]}"; do
-  for peer in "${ALL_CLUSTERS[@]}"; do
-    [ "$local" = "$peer" ] && continue
-    apply_remote_peer "${local%%=*}" "${peer%%=*}" "${peer#*=}"
-  done
+for entry in "${ALL_CLUSTERS[@]}"; do
+  apply_remote_peers "${entry%%=*}"
 done
 ```
 
-Expected output (abridged):
+Expected output (abridged; addresses differ on your machine):
 ```
-istio-remote-peer-cluster2 in cluster1: HBONE 31600, xDS 32633
-gateway.gateway.networking.k8s.io/istio-remote-peer-cluster2 configured
-istio-remote-peer-cluster3 in cluster1: HBONE 30454, xDS 32110
-gateway.gateway.networking.k8s.io/istio-remote-peer-cluster3 created
-istio-remote-peer-cluster4 in cluster1: HBONE 30454, xDS 32110
-gateway.gateway.networking.k8s.io/istio-remote-peer-cluster4 created
+istio-remote-peer-cluster2 in cluster1: xDS 172.30.0.4:31512
+istio-remote-peer-cluster3 in cluster1: xDS 172.30.0.6:31512
+istio-remote-peer-cluster4 in cluster1: xDS 172.30.0.8:31512
+STATUS: deployed
+istio-remote-peer-cluster1 in cluster2: xDS 172.30.0.2:31512
 ...
 ```
 
-Wait for every remote-peer Gateway to be programmed, and list them per cluster
+Wait for every remote peer to connect, and list them per cluster
 ```bash
 for local in "${ALL_CLUSTERS[@]}"; do
   for peer in "${ALL_CLUSTERS[@]}"; do
     [ "$local" = "$peer" ] && continue
-    kubectl wait --for=condition=Programmed gateway/istio-remote-peer-${peer#*=} -n istio-gateways \
+    kubectl wait --for=condition=gloo.solo.io/PeerConnected gateway/istio-remote-peer-${peer#*=} -n istio-gateways \
       --timeout=120s --context "${local%%=*}" > /dev/null
   done
   echo "${local%%=*}: $(kubectl get gateway -n istio-gateways --context "${local%%=*}" -o name | grep remote-peer | sed 's|.*/||' | tr '\n' ' ')"
@@ -562,20 +517,23 @@ NAMESPACE          SERVICE NAME                           SERVICE VIP           
 bookinfo-frontends autogen.bookinfo-frontends.productpage 240.240.0.1,2001:2::1 None     4/4
 ```
 
-The global productpage in cluster1 now has four endpoints, one per cluster. List the network gateways that ztunnel in cluster1 knows:
+The global productpage in cluster1 now has four endpoints, one per cluster. List the network gateways that ztunnel in cluster1 knows, and the peer nodes behind them:
 ```bash
-./solo-istioctl zc all -n istio-system --context $KUBECONTEXT_CLUSTER1 -o json | grep -oE '"NetworkGateway/[^"]*"' | sort -u
+./solo-istioctl zc workloads -n istio-system --context $KUBECONTEXT_CLUSTER1 | grep -E "NetworkGateway|autogen.node" | awk '{print $2, $3}'
 ```
 
-Expected output (addresses and ports differ on your machine):
+Expected output (names and addresses differ on your machine):
 ```
-"NetworkGateway/cluster1/10.96.191.108/15008"
-"NetworkGateway/cluster2/172.30.0.4/31600"
-"NetworkGateway/cluster3/172.30.0.6/30454"
-"NetworkGateway/cluster4/172.30.0.8/30454"
+NetworkGateway/cluster1/10.96.191.108/15008 10.96.191.108
+NetworkGateway/cluster2/node.istio-eastwest.cluster2.mesh.internal/15008 node.istio-eastwest.cluster2.mesh.internal
+NetworkGateway/cluster3/node.istio-eastwest.cluster3.mesh.internal/15008 node.istio-eastwest.cluster3.mesh.internal
+NetworkGateway/cluster4/node.istio-eastwest.cluster4.mesh.internal/15008 node.istio-eastwest.cluster4.mesh.internal
+autogen.node.cluster2.cluster2.4f489252 172.30.0.4
+autogen.node.cluster3.cluster3.5d71fd96 172.30.0.6
+autogen.node.cluster4.cluster4.70ee1a83 172.30.0.8
 ```
 
-The first entry is the local east-west gateway at its ClusterIP. ztunnel reaches each of the three peers at a node IP and HBONE NodePort from its remote-peer Gateway.
+The first entry is the local east-west gateway at its ClusterIP. Each peer has a network gateway hostname, backed by the peer nodes that its istiod lists, here the node that runs its east-west pod. ztunnel sends HBONE to that node on the HBONE NodePort `31508`.
 
 ## Fail Over Across Four Clusters
 
@@ -705,24 +663,26 @@ Expected output:
 The `check_peer_drift` function from lab `013` is repeated here. Run it for all twelve remote-peer Gateways:
 ```bash
 check_peer_drift() {
-  local LOCAL_CTX=$1 PEER_CTX=$2 PEER_MESH=$3 GW WANT_HBONE WANT_XDS HAVE_HBONE HAVE_XDS PEER_NODE_IPS ADDR STATUS=OK
+  local LOCAL_CTX=$1 PEER_CTX=$2 PEER_MESH=$3 GW WANT_XDS HAVE_XDS PEER_NODE_IPS ADDR CONNECTED STATUS=OK
   GW=istio-remote-peer-$PEER_MESH
-  WANT_HBONE=$(kubectl get svc istio-eastwest -n istio-gateways --context $PEER_CTX -o jsonpath='{.spec.ports[?(@.port==15008)].nodePort}')
   WANT_XDS=$(kubectl get svc istio-eastwest -n istio-gateways --context $PEER_CTX -o jsonpath='{.spec.ports[?(@.port==15012)].nodePort}')
-  HAVE_HBONE=$(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.listeners[?(@.name=="cross-network")].port}')
   HAVE_XDS=$(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.listeners[?(@.name=="xds-tls")].port}')
+  ADDR=$(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.addresses[0].value}')
+  CONNECTED=$(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.status.conditions[?(@.type=="gloo.solo.io/PeerConnected")].status}')
   PEER_NODE_IPS=" $(kubectl get nodes --context $PEER_CTX -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address} {end}')"
-  if [ "$WANT_HBONE" != "$HAVE_HBONE" ] || [ "$WANT_XDS" != "$HAVE_XDS" ]; then
-    echo "DRIFT  $LOCAL_CTX/$GW: listener ports $HAVE_HBONE/$HAVE_XDS, $PEER_CTX NodePorts are $WANT_HBONE/$WANT_XDS"
+  if [ "$WANT_XDS" != "$HAVE_XDS" ]; then
+    echo "DRIFT  $LOCAL_CTX/$GW: xDS port $HAVE_XDS, $PEER_CTX xDS NodePort is $WANT_XDS"
     STATUS=DRIFT
   fi
-  for ADDR in $(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.addresses[*].value}'); do
-    case "$PEER_NODE_IPS" in
-      *" $ADDR "*) ;;
-      *) echo "DRIFT  $LOCAL_CTX/$GW: address $ADDR is not a node in $PEER_CTX"; STATUS=DRIFT ;;
-    esac
-  done
-  [ $STATUS = OK ] && echo "OK     $LOCAL_CTX/$GW: $(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.addresses[*].value}') ports $HAVE_HBONE/$HAVE_XDS"
+  case "$PEER_NODE_IPS" in
+    *" $ADDR "*) ;;
+    *) echo "DRIFT  $LOCAL_CTX/$GW: address $ADDR is not a node in $PEER_CTX"; STATUS=DRIFT ;;
+  esac
+  if [ "$CONNECTED" != "True" ]; then
+    echo "DRIFT  $LOCAL_CTX/$GW: PeerConnected=$CONNECTED"
+    STATUS=DRIFT
+  fi
+  [ $STATUS = OK ] && echo "OK     $LOCAL_CTX/$GW: $ADDR:$HAVE_XDS connected"
   [ $STATUS = OK ]
 }
 
@@ -734,38 +694,38 @@ for local in "${ALL_CLUSTERS[@]}"; do
 done
 ```
 
-Expected output (addresses and ports differ on your machine):
+Expected output (addresses differ on your machine):
 ```
-OK     cluster1/istio-remote-peer-cluster2: 172.30.0.4 ports 31600/32633
-OK     cluster1/istio-remote-peer-cluster3: 172.30.0.6 ports 30454/32110
-OK     cluster1/istio-remote-peer-cluster4: 172.30.0.8 ports 30454/32110
-OK     cluster2/istio-remote-peer-cluster1: 172.30.0.2 ports 30454/32110
+OK     cluster1/istio-remote-peer-cluster2: 172.30.0.4:31512 connected
+OK     cluster1/istio-remote-peer-cluster3: 172.30.0.6:31512 connected
+OK     cluster1/istio-remote-peer-cluster4: 172.30.0.8:31512 connected
+OK     cluster2/istio-remote-peer-cluster1: 172.30.0.2:31512 connected
 ...
-OK     cluster4/istio-remote-peer-cluster2: 172.30.0.4 ports 31600/32633
-OK     cluster4/istio-remote-peer-cluster3: 172.30.0.6 ports 30454/32110
+OK     cluster4/istio-remote-peer-cluster2: 172.30.0.4:31512 connected
+OK     cluster4/istio-remote-peer-cluster3: 172.30.0.6:31512 connected
 ```
 
-Run this loop on a schedule. When a control-plane node in cluster3 is replaced, it reports three `DRIFT` lines, one in each cluster that peers with cluster3, and the `apply_remote_peer` loop above repairs all three.
+Run this loop on a schedule. When the control-plane node of cluster3 is replaced, it reports `DRIFT` for three Gateways, one in each cluster that peers with cluster3, and the `apply_remote_peers` loop above repairs all three.
 
 | Lifecycle event | Two clusters | Four clusters |
 |---|---|---|
-| A peer node in one cluster is replaced | 1 stale Gateway | 3 stale Gateways, one in each other cluster |
-| A fifth cluster joins | | 8 new Gateways: 4 in the new cluster, 1 in each existing cluster. Add its trust domain to every policy in all five clusters |
+| The xDS address node in one cluster is replaced | 1 peer loses its xDS link | 3 peers lose their xDS link, one in each other cluster |
+| A fifth cluster joins | | 8 new Gateways from one run of the all-clusters loop: 4 in the new cluster, 1 in each existing cluster. Add its trust domain to every policy in all five clusters |
 | An upgrade (lab `018`) | Drift check for 2 Gateways first | Drift check for 12 Gateways first, then upgrade one cluster at a time |
 
 ## Cleanup
 
-Remove the probe pods, and take cluster3 and cluster4 out of the mesh. Move traffic off them first, as lab `013` describes. Then delete their remote-peer Gateways on every side, and put the two-cluster policies back in cluster1 and cluster2:
+Remove the probe pods, and take cluster3 and cluster4 out of the mesh. Move traffic off them first, as lab `013` describes. Then uninstall their `peering-remote` releases, run `apply_remote_peers` in cluster1 and cluster2 with the two-cluster list, and put the two-cluster policies back in cluster1 and cluster2:
 ```bash
 for entry in "${ALL_CLUSTERS[@]}"; do
   kubectl delete pod reach-probe -n default --context "${entry%%=*}" --ignore-not-found
 done
 for entry in "${NEW_CLUSTERS[@]}"; do
-  for other in "${ALL_CLUSTERS[@]}"; do
-    [ "$other" = "$entry" ] && continue
-    kubectl delete gateway istio-remote-peer-${entry#*=} -n istio-gateways --context "${other%%=*}" --ignore-not-found
-    kubectl delete gateway istio-remote-peer-${other#*=} -n istio-gateways --context "${entry%%=*}" --ignore-not-found
-  done
+  helm uninstall peering-remote -n istio-gateways --kube-context "${entry%%=*}"
+done
+ALL_CLUSTERS=("$KUBECONTEXT_CLUSTER1=$MESH_NAME_CLUSTER1" "$KUBECONTEXT_CLUSTER2=$MESH_NAME_CLUSTER2")
+for entry in "${ALL_CLUSTERS[@]}"; do
+  apply_remote_peers "${entry%%=*}"
 done
 for CTX in $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2; do
   kubectl apply -f auth-policy/productpage-auth.yaml -f auth-policy/waypoint-auth.yaml --context $CTX
@@ -780,13 +740,13 @@ NAMESPACE          SERVICE NAME                           SERVICE VIP           
 bookinfo-frontends autogen.bookinfo-frontends.productpage 240.240.0.1,2001:2::1 None     2/2
 ```
 
-The global productpage is back to two endpoints. Istio and Bookinfo stay installed on cluster3 and cluster4. Lab `020` removes them when you add the two contexts to its cluster list.
+The global productpage is back to two endpoints. Istio, Bookinfo and the `peering-eastwest` release stay installed on cluster3 and cluster4. Lab `020` removes them when you add the two contexts to its cluster list.
 
 ## Next Steps
 At this point we have completed the following objectives:
 - Installed Istio Ambient and Bookinfo on `cluster3` and `cluster4` with the shared root of trust
-- Created the east-west gateways on the new clusters with NodePorts pinned before the first peering
-- Checked NodePort reachability in all twelve directions between the four clusters
+- Created the east-west gateways on the new clusters from the `peering` chart, with the same fixed NodePorts
+- Checked xDS and HBONE NodePort reachability in all twelve directions between the four clusters
 - Peered the four clusters in a full mesh with one loop
 - Copied the policy baseline to the new clusters, and extended every policy to the four trust domains
 - Failed productpage over across four clusters

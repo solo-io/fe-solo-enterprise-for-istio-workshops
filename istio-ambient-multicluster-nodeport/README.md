@@ -7,6 +7,7 @@ Hands-on workshop for deploying Solo Enterprise for Istio Ambient Mesh across tw
 | Component | Version |
 |---|---|
 | Istio (Solo) | 1.28.10-patch0-solo (lab `018` upgrades to 1.29.7-patch0-solo and back) |
+| Solo `peering` Helm chart | 1.29.7-patch0-solo |
 | Solo Enterprise for agentgateway | v2026.9.3 |
 | Gateway API | v1.4.1 |
 | Kubernetes | ≥ 1.29 |
@@ -40,13 +41,13 @@ Hands-on workshop for deploying Solo Enterprise for Istio Ambient Mesh across tw
 | [010-east-west-data-path.md](010-east-west-data-path.md) | Trace and measure each east-west path, bypass a central gateway hostname, and the bypass boundaries |
 | [011-observability.md](011-observability.md) | Lean metrics: central Prometheus, agent-mode Prometheus over the mesh, namespace dashboards |
 | [012-move-a-hostname-between-clusters.md](012-move-a-hostname-between-clusters.md) | Move a stable customer hostname between clusters by route weight, under load |
-| [013-nodeport-peering-lifecycle.md](013-nodeport-peering-lifecycle.md) | Detect and repair peering drift, pin NodePorts, take a cluster out and bring it back |
+| [013-nodeport-peering-lifecycle.md](013-nodeport-peering-lifecycle.md) | Follow the east-west gateway across nodes, detect and repair a lost xDS link, take a cluster out and bring it back |
 | [014-per-hostname-certificates.md](014-per-hostname-certificates.md) | Per-hostname ECDSA P-256 certificates from cert-manager on the ingress gateway |
 | [015-client-source-ip.md](015-client-source-ip.md) | Keep the real client IP: `externalTrafficPolicy`, PROXY protocol, `X-Forwarded-For` across clusters |
 | [016-egress-with-stable-ips.md](016-egress-with-stable-ips.md) | Egress through a waypoint pinned to egress nodes, with stable source IPs and egress policy |
 | [017-migrate-ingress-nginx.md](017-migrate-ingress-nginx.md) | Convert ingress-nginx and Istio ingress objects to Gateway API for agentgateway with `ingress2gateway`, including capture-group rewrites |
 | [018-upgrade-and-roll-back.md](018-upgrade-and-roll-back.md) | In-place upgrade from 1.28 to 1.29 under load, and roll back |
-| [019-add-clusters.md](019-add-clusters.md) | Add two clusters and peer all four over NodePort: pinned ports, reachability matrix, trust domains, four-way failover |
+| [019-add-clusters.md](019-add-clusters.md) | Add two clusters and peer all four over NodePort: reachability matrix, trust domains, four-way failover |
 | [020-cleanup.md](020-cleanup.md) | Teardown |
 
 ## Getting Started

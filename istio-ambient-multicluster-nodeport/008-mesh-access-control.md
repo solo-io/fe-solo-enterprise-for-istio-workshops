@@ -345,7 +345,7 @@ kubectl logs -n istio-system -l app=ztunnel --context $KUBECONTEXT_CLUSTER1 --si
 
 Expected output:
 ```
-   4 dst.workload="NetworkGateway/cluster2/172.30.0.4/31213" response_code=200
+   4 dst.workload="autogen.node.cluster2.cluster2.4f489252" response_code=200
    4 dst.workload="productpage-v1-59c74584cf-9glph" error="http status: 401 Unauthorized"
 ```
 

@@ -23,9 +23,6 @@ Useful commands:
 #useful for removing Istio when iterating version / testing
 ./solo-istioctl uninstall --purge -y --context $context 
 
-#create a quick east-west gateway for multicluster peering
-./solo-istioctl multicluster expose --namespace istio-gateways --context ${context}
-
 #check peering health across both clusters
 ./solo-istioctl multicluster check --contexts=${KUBECONTEXT_CLUSTER1},${KUBECONTEXT_CLUSTER2}
 
@@ -39,8 +36,8 @@ Useful commands:
 ./solo-istioctl waypoint
 ```
 
-> **Note:** lab `007` applies the remote-peer Gateways with `kubectl`. In 1.28, `./solo-istioctl multicluster link`
-> needs a LoadBalancer address on the east-west gateway.
+> **Note:** lab `007` creates the east-west and remote-peer Gateways with Solo's `peering` Helm chart. In 1.28,
+> `./solo-istioctl multicluster expose` and `link` expect a LoadBalancer address on the east-west gateway.
 
 ## Optional Tools
 #### K9s (CLI K8s control)

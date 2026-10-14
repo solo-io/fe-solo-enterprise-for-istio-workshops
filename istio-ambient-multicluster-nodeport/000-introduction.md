@@ -14,7 +14,7 @@
 - Trace and measure the east-west data path, and bypass a central gateway hostname
 - Collect mesh metrics from both clusters into one Prometheus and Grafana
 - Move a stable hostname between clusters by route weight, under load
-- Detect and repair NodePort peering drift, and pin the east-west NodePorts
+- Follow the east-west gateway across nodes, and detect and repair a lost xDS link to a peer
 - Serve per-hostname ECDSA P-256 certificates from cert-manager
 - Carry the real client IP through the ingress gateway and across clusters
 - Send egress through dedicated nodes with stable source IPs
@@ -44,7 +44,7 @@
 
 ## NodePort Peering
 
-This workshop follows Solo's multi-cluster NodePort reference architecture ([`solo-reference-architectures/Ambient_Mesh/multi-cluster-nodeport`](https://github.com/solo-io/solo-reference-architectures/tree/main/Ambient_Mesh/multi-cluster-nodeport), Solo access required). Each cluster exposes its east-west gateway as a `NodePort` Service. Each cluster's remote-peer Gateway points at the other cluster's node InternalIPs and at the NodePorts for HBONE (`15008`) and xDS (`15012`). The design fits on-premises and private networks where the nodes of both clusters reach each other directly.
+The clusters peer through east-west gateways exposed as `NodePort` Services, with no LoadBalancer. Solo's `peering` Helm chart creates both sides: the east-west gateway with fixed NodePorts for HBONE (`15008`) and xDS (`15012`), and one remote-peer Gateway per peer cluster that points at a node InternalIP and the xDS NodePort of that peer. The chart turns on Solo's NodePort data plane, a beta feature: istiod learns from each peer which nodes run its east-west gateway, and ztunnel sends cross-cluster HBONE to those nodes. The design fits on-premises and private networks where the nodes of both clusters reach each other directly.
 
 ## Ingress
 
@@ -53,6 +53,7 @@ Solo Enterprise for agentgateway is the ingress gateway. It joins the mesh throu
 ## Validated on
 - Kubernetes ≥ 1.29
 - Istio 1.28.10-patch0-solo
+- Solo `peering` Helm chart 1.29.7-patch0-solo, for the east-west and remote-peer Gateways
 - Solo Enterprise for agentgateway v2026.9.3, on Gateway API v1.4.1
 - vind on Docker Desktop (arm64): two clusters with two nodes each, peered over NodePorts, for every lab
 - vind on Docker Desktop (arm64): four clusters with two nodes each for lab `019`

@@ -44,7 +44,7 @@ done
 helm uninstall cert-manager -n cert-manager --kube-context $KUBECONTEXT_CLUSTER1 --ignore-not-found
 ```
 
-The `ingress-edge` Gateway, its parameters and policy (lab `015`) live in `agentgateway-system`, which the agentgateway section deletes. The rewrite policy from lab `017` lives in `api-echo`, which the loop above deletes. The NodePort pins (labs `013` and `019`), the waypoints (lab `009`) and every `AuthorizationPolicy` and `PeerAuthentication` (labs `008`, `009`, `011`) live in namespaces that the Istio section deletes.
+The `ingress-edge` Gateway, its parameters and policy (lab `015`) live in `agentgateway-system`, which the agentgateway section deletes. The rewrite policy from lab `017` lives in `api-echo`, which the loop above deletes. The waypoints (lab `009`) and every `AuthorizationPolicy` and `PeerAuthentication` (labs `008`, `009`, `011`) live in namespaces that the Istio section deletes.
 
 ## Agentgateway (lab `005`)
 
@@ -63,9 +63,9 @@ done
 
 ## Istio, gateways and Bookinfo (labs `001`-`007`)
 
-The loop below removes every namespace, gateway and Helm release the core labs create. Deleting the
-Gateways first removes the east-west gateway deployments and their Services, and
-the remote-peer Gateways end the peering. The `kubectl get crd` guard keeps the loop safe to rerun after
+The loop below removes every namespace, gateway and Helm release the core labs create. Uninstalling the
+`peering-remote` and `peering-eastwest` releases (labs `007` and `019`) first ends the peering and removes the
+east-west gateway deployments, their Services and the NodePort ConfigMap. The `kubectl get crd` guard keeps the loop safe to rerun after
 you remove the CRDs below: `--ignore-not-found` forgives a missing resource but still errors on a
 missing CRD.
 
@@ -73,7 +73,11 @@ missing CRD.
 for CONTEXT in "${CLUSTERS[@]}"; do
   echo "Cleaning up $CONTEXT..."
 
-  # Routes and gateways (labs 006, 007, 009, 019)
+  # Peering releases (labs 007 and 019)
+  helm uninstall peering-remote -n istio-gateways --kube-context $CONTEXT --ignore-not-found
+  helm uninstall peering-eastwest -n istio-gateways --kube-context $CONTEXT --ignore-not-found
+
+  # Routes and gateways (labs 006, 009)
   if kubectl get crd gateways.gateway.networking.k8s.io --context $CONTEXT &>/dev/null; then
     kubectl delete httproute,grpcroute -n bookinfo-frontends --all --context $CONTEXT --ignore-not-found
     kubectl delete gateways -n bookinfo-backends --all --context $CONTEXT --ignore-not-found
