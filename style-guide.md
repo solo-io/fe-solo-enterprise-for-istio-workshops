@@ -34,7 +34,7 @@ Pick the archetype before writing; conventions differ slightly.
 1. **Install or platform lab** (~250–350 lines): `001`–`003` in each workshop. Helm installs with inline values, `rollout status` waits, a `## Validate the installation` section with `kubectl get pods` expected output. Examples: `002-install-istio.md`, `003-enroll-apps-in-the-mesh.md`.
 2. **Feature lab** (~180–500 lines): one mesh capability, taught as Background → deploy → verify → (repeat per sub-feature) → Cleanup → Next Steps. Examples: `005-egress.md`, `006-waypoints.md`, `007-segments.md`, `010-grpc-loadbalancing.md`.
 3. **Asset-bearing lab**: a feature lab whose manifests are too long or too reusable to inline, shipped in a workshop-local folder (§4). Examples: `011-vm-integration.md` + `vm/`, `012-vm-integration-mysql.md` + `vm/mysql/`.
-4. **Narrative or migration lab**: multi-phase runbook with `## Step N — Title` headings and explicit before/after validation. Example: `istio-oss-sidecar-to-enterprise-ambient/005-migrate-namespaces.md`.
+4. **Narrative or migration lab**: multi-phase runbook with `## Step N — Title` headings and explicit before/after validation. Example: `istio-oss-sidecar-to-enterprise-ambient/006-migrate-namespaces.md`.
 5. **Standalone long-form lab** (~1300 lines): self-contained, no `000` dependency, `# Part N` H1 dividers, `## Step N: Title` headings, Troubleshooting, Cleanup and a `## What you built` close. Only `advanced-scenarios/local-dev-against-global-mesh.md` has this shape; use it for a scenario that doesn't fit a workshop sequence.
 6. **Reference page** (rare): prose + tables, no hands-on skeleton, opens with a `**Reference page.**` bold lead. Example: `reference/ambient-ports.md`.
 

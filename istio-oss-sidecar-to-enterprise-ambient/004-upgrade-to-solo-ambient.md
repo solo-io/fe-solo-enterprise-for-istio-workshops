@@ -179,4 +179,4 @@ At this point we have completed the following objectives:
 - Installed `ztunnel` DaemonSet
 - Confirmed sidecar workloads continue running (coexistence period)
 
-In the next step `005` we will migrate the bookinfo namespaces from sidecar mode to ambient mode
+In the next step `005` we will move `bookinfo-backends` to ambient while `productpage` and the ingress gateway stay on Envoy, and use sidecar and ambient interop to keep waypoint policies in force across both

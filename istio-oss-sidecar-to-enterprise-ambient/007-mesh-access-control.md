@@ -7,7 +7,7 @@
 - Observe policy enforcement in ztunnel logs
 
 ## Prerequisites
-- This lab assumes you have completed labs `000`–`005`
+- This lab assumes you have completed labs `000`–`006`
 - Bookinfo namespaces are enrolled in ambient mesh (pods show `1/1 READY`, HBONE protocol)
 
 Ensure the following environment variables are set:
@@ -173,4 +173,4 @@ At this point we have completed the following objectives:
 - Validated ztunnel log enforcement
 - Fully restored application access
 
-In the next step `007` we will configure L7 traffic management with waypoints.
+In the next step `008` we will configure L7 traffic management with waypoints.

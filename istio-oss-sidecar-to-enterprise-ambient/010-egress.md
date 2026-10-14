@@ -9,7 +9,7 @@
 ![](../images/egress-1.png)
 
 ## Prerequisites
-- This lab assumes you have completed labs `000`–`005`
+- This lab assumes you have completed labs `000`–`006`
 - Bookinfo namespaces are enrolled in ambient mesh (pods show `1/1 READY`, HBONE protocol)
 
 Ensure the following environment variables are set:
@@ -192,4 +192,4 @@ At this point we have completed the following objectives:
 - Confirmed waypoint interception via Envoy response headers and access logs
 - Enforced egress authorization policies by path and source principal
 
-In the next step `010` we will clean up the workshop environment.
+In the next step `011` we will clean up the workshop environment.

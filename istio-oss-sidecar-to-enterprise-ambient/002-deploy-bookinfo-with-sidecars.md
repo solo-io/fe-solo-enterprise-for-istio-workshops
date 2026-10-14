@@ -84,7 +84,7 @@ reviews-v2-<hash>                2/2     Running   0          1m
 reviews-v3-<hash>                2/2     Running   0          1m
 ```
 
-The `2/2` means two containers per pod: the application container and the Envoy sidecar. After migration to ambient in lab `005`, these will show `1/1`.
+The `2/2` means two containers per pod: the application container and the Envoy sidecar. After migration to ambient in labs `005` and `006`, these will show `1/1`.
 
 Check the proxy status across all sidecar-injected workloads:
 ```bash
@@ -96,10 +96,17 @@ This shows all Envoy sidecars synced to istiod. Once we migrate to ambient, ztun
 Inspect the containers in a pod to see the injected sidecar:
 ```bash
 kubectl get pod -n bookinfo-frontends --context $KUBECONTEXT_CLUSTER1 \
-  -o jsonpath='{range .items[0].spec.containers[*]}{.name}{"\n"}{end}'
+  -o jsonpath='{range .items[0].spec.initContainers[*]}{.name}{"\n"}{end}{range .items[0].spec.containers[*]}{.name}{"\n"}{end}'
 ```
 
-You should see two containers: `productpage` and `istio-proxy` (the Envoy sidecar).
+Expected output:
+```
+istio-init
+istio-proxy
+productpage
+```
+
+`istio-proxy` is the Envoy sidecar. Istio injects it as a Kubernetes native sidecar: an init container with `restartPolicy: Always` that starts before the app and keeps running beside it. `istio-init` sets up the traffic redirect and exits.
 
 ## Validate Application Access via Port-Forward
 

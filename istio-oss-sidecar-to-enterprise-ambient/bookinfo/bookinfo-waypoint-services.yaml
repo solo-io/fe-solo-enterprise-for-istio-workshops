@@ -1,5 +1,5 @@
-# Additional Services used only in lab 010 (L7 Traffic Management with Waypoints).
-# Apply at the start of that lab and remove during cleanup.
+# Additional Services used in lab 005 (Sidecar and Ambient Interop) and lab 008 (L7 Traffic Management with Waypoints).
+# Each lab applies them at the start and removes them during cleanup.
 ---
 # Selects only reviews-v3 (red stars) — the version engineering deemed most stable
 apiVersion: v1
