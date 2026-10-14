@@ -1,5 +1,11 @@
 # Changelog
 
+0.0.6 - (10-14-26)
+---
+- Add the Cilium settings ambient needs to `000-prerequisites.md`: `cni.exclusive=false`, `socketLB.hostNamespaceOnly=true`, `bpf.masquerade` off, a config check, and the `169.254.7.127/32` probe policy for clusters with default-deny
+- Add Cilium notes to labs `002`, `003` and `019` (Cilium settings before istio-cni), `007` and `013` (Cilium forwards NodePort traffic in place of kube-proxy), `010` (ztunnel still picks the endpoint) and `015` (Cilium SNATs only cross-node NodePort traffic)
+- Update `README.md` and `000-introduction.md` with the Cilium version, and add a Cilium row to the use-case matrix in the root `README.md`
+
 0.0.5 - (10-14-26)
 ---
 - Switch `istio-ambient-multicluster-nodeport` peering to Solo's `peering` Helm chart `1.29.7-patch0-solo` with its NodePort data plane (beta), on Istio `1.28.10-patch0-solo`

@@ -52,6 +52,7 @@ Hands-on workshops for deploying and operating **Solo Enterprise for Istio** wit
 | Client source IP (PROXY protocol, `externalTrafficPolicy`) | | | | ✓ | | |
 | Ingress migration from ingress-nginx | | | | ✓ | | |
 | Upgrade and rollback | | | | ✓ | | |
+| Cilium CNI with kube-proxy replacement | | | | ✓ | | |
 | Add clusters past two (full-mesh peering) | | | ✓ | ✓ | | |
 
 ## Versions
@@ -63,7 +64,7 @@ Hands-on workshops for deploying and operating **Solo Enterprise for Istio** wit
 | Kubernetes | ≥ 1.29 |
 | OpenShift | 4.16.0 – 4.19.x |
 
-The `istio-ambient-multicluster-nodeport` workshop runs on Istio `1.28.10-patch0-solo` with Solo Enterprise for agentgateway `v2026.9.3` as the ingress gateway, and lab `018` upgrades Istio to `1.29.7-patch0-solo` and back. Its east-west and remote-peer Gateways come from the Solo `peering` Helm chart `1.29.7-patch0-solo`.
+The `istio-ambient-multicluster-nodeport` workshop runs on Istio `1.28.10-patch0-solo` with Solo Enterprise for agentgateway `v2026.9.3` as the ingress gateway, and lab `018` upgrades Istio to `1.29.7-patch0-solo` and back. Its east-west and remote-peer Gateways come from the Solo `peering` Helm chart `1.29.7-patch0-solo`. It also runs on Cilium `1.20.2` with kube-proxy replacement.
 
 ## Prerequisites
 

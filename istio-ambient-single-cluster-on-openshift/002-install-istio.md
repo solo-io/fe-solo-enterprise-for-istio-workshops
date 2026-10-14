@@ -57,9 +57,9 @@ oc --context $KUBECONTEXT_CLUSTER1 get network.operator cluster \
 
 > **Reference:** [Istio Ambient — OpenShift platform prerequisites](https://istio.io/latest/docs/ambient/install/platform-prerequisites/)
 
-Export your Solo.io license key and Istio version:
+Set your Solo Trial License Key and the Istio version:
 ```bash
-export SOLO_TRIAL_LICENSE_KEY=<paste-your-key>
+export SOLO_TRIAL_LICENSE_KEY=$SOLO_TRIAL_LICENSE_KEY
 [ -n "$SOLO_TRIAL_LICENSE_KEY" ] || echo "⚠️  SOLO_TRIAL_LICENSE_KEY is not set. Istio installs with an empty license and enterprise features, including multicluster peering, then fail."
 export ISTIO_VERSION=1.30.5
 ```

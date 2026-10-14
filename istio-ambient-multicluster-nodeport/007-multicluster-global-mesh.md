@@ -109,7 +109,7 @@ for entry in "${ALL_CLUSTERS[@]}"; do
 done
 ```
 
-Check the Service in both clusters. A remote peer points at one node of the peer cluster, and kube-proxy on that node forwards the NodePort traffic to a gateway pod in the same cluster. That needs `externalTrafficPolicy: Cluster`, the default. With `Local`, a node without a gateway pod drops the traffic:
+Check the Service in both clusters. A remote peer points at one node of the peer cluster, and kube-proxy on that node forwards the NodePort traffic to a gateway pod in the same cluster. With Cilium kube-proxy replacement, Cilium's eBPF NodePort handling does the same forwarding. That needs `externalTrafficPolicy: Cluster`, the default. With `Local`, a node without a gateway pod drops the traffic:
 ```bash
 for entry in "${ALL_CLUSTERS[@]}"; do
   echo "${entry%%=*}: $(kubectl get svc istio-eastwest -n istio-gateways --context "${entry%%=*}" --no-headers \

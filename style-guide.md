@@ -139,7 +139,7 @@ export MESH_NAME_CLUSTER1=cluster1    # Recommended to keep as cluster1 for POC
 License guard (install labs only):
 
 ```bash
-export SOLO_TRIAL_LICENSE_KEY=<paste-your-key>
+export SOLO_TRIAL_LICENSE_KEY=$SOLO_TRIAL_LICENSE_KEY
 [ -n "$SOLO_TRIAL_LICENSE_KEY" ] || echo "⚠️  SOLO_TRIAL_LICENSE_KEY is not set. Istio installs with an empty license and enterprise features, including multicluster peering, then fail."
 export ISTIO_VERSION=1.30.5
 ```
