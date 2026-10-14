@@ -11,6 +11,51 @@
 
 > **Network:** the clusters peer over NodePorts. Lab `007` fixes the east-west NodePorts at `31508` for **15008** (HBONE data plane) and `31512` for **15012** (xDS/CA and registry sync). The nodes of each cluster must reach every node InternalIP of the other clusters on `31508`, and the peer node that lab `007` selects for xDS on `31512`. Full list: [Ports used in an Istio ambient mesh](../reference/ambient-ports.md).
 
+> **Cilium with kube-proxy replacement (KPR):** Istio ambient runs on top of Cilium as the CNI, with or without kube-proxy. Set these Cilium Helm values in every cluster before lab `002`:
+> ```yaml
+> kubeProxyReplacement: true
+> k8sServiceHost: <api-server-host>   # Cilium reaches the API server directly without kube-proxy
+> k8sServicePort: 6443
+> cni:
+>   exclusive: false          # keeps the istio-cni plugin in Cilium's chained CNI config
+> socketLB:
+>   hostNamespaceOnly: true   # pods keep the Service IP, so ztunnel picks the endpoint
+> bpf:
+>   masquerade: false         # the default. eBPF masquerading breaks ambient health probes
+> ```
+> Check the running config in each cluster:
+> ```bash
+> kubectl -n kube-system get cm cilium-config -o jsonpath='{.data}' | tr ',' '\n' \
+>   | grep -E '"(kube-proxy-replacement|bpf-lb-sock-hostns-only|cni-exclusive|enable-bpf-masquerade)"'
+> ```
+> Expected output (`enable-bpf-masquerade` is absent or `"false"`):
+> ```
+> "bpf-lb-sock-hostns-only":"true"
+> "cni-exclusive":"false"
+> "kube-proxy-replacement":"true"
+> ```
+> After lab `002`, `/etc/cni/net.d/05-cilium.conflist` on each node lists the `istio-cni` plugin after `cilium-cni`.
+>
+> Ambient sends kubelet health probes from the link-local address `169.254.7.127`. Cilium exempts kubelet probes from policy, but it treats this address as an ordinary source. If the cluster has a default-deny policy, allow that address into every endpoint, or ambient pods fail their readiness checks:
+> ```bash
+> kubectl apply -f - <<EOF
+> apiVersion: cilium.io/v2
+> kind: CiliumClusterwideNetworkPolicy
+> metadata:
+>   name: allow-ambient-hostprobes
+> spec:
+>   description: Allow SNATed kubelet health probes into ambient pods
+>   enableDefaultDeny:
+>     egress: false
+>     ingress: false
+>   endpointSelector: {}
+>   ingress:
+>   - fromCIDR:
+>     - 169.254.7.127/32
+> EOF
+> ```
+> Sources: Istio [platform prerequisites for Cilium](https://istio.io/latest/docs/ambient/install/platform-prerequisites/#cilium) and Cilium [Istio integration](https://docs.cilium.io/en/stable/network/servicemesh/istio/).
+
 ### Repos/Images:
 
 > **Air-gapped clusters:** [`lib/mirror-images.sh`](../lib/mirror-images.sh) copies every image listed below, with all

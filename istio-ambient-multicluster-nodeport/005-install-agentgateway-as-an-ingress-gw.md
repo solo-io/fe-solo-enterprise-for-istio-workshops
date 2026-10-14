@@ -15,9 +15,9 @@ export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context
 export MESH_NAME_CLUSTER1=cluster1    # Recommended to keep as cluster1 for POC
 ```
 
-Export your Solo Trial License Key and the agentgateway version
+Set your Solo Trial License Key and the agentgateway version
 ```bash
-export SOLO_TRIAL_LICENSE_KEY=<paste-your-key>
+export SOLO_TRIAL_LICENSE_KEY=$SOLO_TRIAL_LICENSE_KEY
 [ -n "$SOLO_TRIAL_LICENSE_KEY" ] || echo "WARNING: SOLO_TRIAL_LICENSE_KEY is not set. The agentgateway controller needs a license to program gateways."
 export ENTERPRISE_AGW_VERSION=v2026.9.3
 ```

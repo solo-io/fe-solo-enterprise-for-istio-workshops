@@ -75,7 +75,7 @@ cluster1 east-west pod on cluster1 (172.30.0.2)
 cluster2 sends HBONE to: 172.30.0.2 172.30.0.3
 ```
 
-The list can hold more nodes than the east-west pod's node. istiod lists every node that runs a Gateway API gateway pod: the east-west gateway, the agentgateway `ingress` pod and the waypoints. kube-proxy on each of those nodes forwards HBONE to the east-west pod, as lab `007` showed for xDS.
+The list can hold more nodes than the east-west pod's node. istiod lists every node that runs a Gateway API gateway pod: the east-west gateway, the agentgateway `ingress` pod and the waypoints. kube-proxy, or Cilium with kube-proxy replacement, on each of those nodes forwards HBONE to the east-west pod, as lab `007` showed for xDS.
 
 Move the east-west pod: cordon its node, restart the gateway, and uncordon the node. Then wait until cluster2 lists the new node, for up to 60 seconds:
 ```bash

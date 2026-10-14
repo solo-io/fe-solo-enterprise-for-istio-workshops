@@ -11,6 +11,7 @@ Hands-on workshop for deploying Solo Enterprise for Istio Ambient Mesh across tw
 | Solo Enterprise for agentgateway | v2026.9.3 |
 | Gateway API | v1.4.1 |
 | Kubernetes | ≥ 1.29 |
+| Cilium with kube-proxy replacement (optional CNI) | 1.20.2 |
 
 ## Prerequisites
 

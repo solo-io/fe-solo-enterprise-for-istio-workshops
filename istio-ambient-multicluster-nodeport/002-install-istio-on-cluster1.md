@@ -18,10 +18,10 @@ export MESH_NAME_CLUSTER1=cluster1    # Recommended to keep as cluster1 for POC
 
 > **KinD users:** set `KUBECONTEXT_CLUSTER1=kind-cluster1` and keep `MESH_NAME_CLUSTER1=cluster1`. The mesh name is the Istio network name, and it must match the `topology.istio.io/network` label and the ztunnel network. A mismatch makes ztunnel bypass waypoints.
 
-Export your Solo Trial License Key (if you did not in lab `000`) and the Istio version:
+Set your Solo Trial License Key and the Istio version:
 ```bash
-export SOLO_TRIAL_LICENSE_KEY=${SOLO_TRIAL_LICENSE_KEY:-<paste-your-key>}
-case "$SOLO_TRIAL_LICENSE_KEY" in ""|"<paste-your-key>") echo "WARNING: SOLO_TRIAL_LICENSE_KEY is not set. Istio installs with an empty license and enterprise features, including multicluster peering, then fail." ;; esac
+export SOLO_TRIAL_LICENSE_KEY=$SOLO_TRIAL_LICENSE_KEY
+[ -n "$SOLO_TRIAL_LICENSE_KEY" ] || echo "WARNING: SOLO_TRIAL_LICENSE_KEY is not set. Istio installs with an empty license and enterprise features, including multicluster peering, then fail."
 export ISTIO_VERSION=1.28.10-patch0
 ```
 
@@ -158,6 +158,30 @@ kubectl get crd gateways.gateway.networking.k8s.io --context $KUBECONTEXT_CLUSTE
 > ```bash
 > kubectl apply -f gke/resourcequota.yaml --context $KUBECONTEXT_CLUSTER1
 > ```
+
+> **Cilium with kube-proxy replacement:** the istio-cni values below stay the same. Before you install istio-cni, check the Cilium settings ambient needs:
+> ```bash
+> kubectl -n kube-system get cm cilium-config --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.data}' | tr ',' '\n' \
+>   | grep -E '"(kube-proxy-replacement|bpf-lb-sock-hostns-only|cni-exclusive|enable-bpf-masquerade)"'
+> ```
+> Expected output (`enable-bpf-masquerade` is absent or `"false"`):
+> ```
+> "bpf-lb-sock-hostns-only":"true"
+> "cni-exclusive":"false"
+> "kube-proxy-replacement":"true"
+> ```
+> If a value differs, set it in the Cilium Helm values and upgrade the Cilium release:
+> ```yaml
+> cni:
+>   exclusive: false          # keeps the istio-cni plugin in Cilium's chained CNI config
+> socketLB:
+>   hostNamespaceOnly: true   # pods keep the Service IP, so ztunnel picks the endpoint
+> bpf:
+>   masquerade: false         # the default. eBPF masquerading breaks ambient health probes
+> ```
+> With `cni.exclusive=true`, Cilium removes the istio-cni plugin from the CNI config, and new pods start without ztunnel redirection.
+>
+> Sources: Istio [platform prerequisites for Cilium](https://istio.io/latest/docs/ambient/install/platform-prerequisites/#cilium) and Cilium [Istio integration](https://docs.cilium.io/en/stable/network/servicemesh/istio/).
 
 Install istio-cni
 

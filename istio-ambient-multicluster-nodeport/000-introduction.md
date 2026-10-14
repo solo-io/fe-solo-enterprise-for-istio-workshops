@@ -57,12 +57,13 @@ Solo Enterprise for agentgateway is the ingress gateway. It joins the mesh throu
 - Solo Enterprise for agentgateway v2026.9.3, on Gateway API v1.4.1
 - Two clusters with two nodes each, peered over NodePorts (four clusters for lab `019`)
 - Istio 1.29.7-patch0-solo as the upgrade target in lab `018`
+- Optional: Cilium 1.20.2 as the CNI with kube-proxy replacement (settings in [prerequisites](000-prerequisites.md))
 
 # High Level Architecture Diagram
 ![](../images/multicluster-global-mesh-agentgateway-1.png)
 
 ## License Key Details
-This workshop requires a Solo Trial License Key, exported as `SOLO_TRIAL_LICENSE_KEY` in lab `002`.
+This workshop requires a Solo Trial License Key, exported as `SOLO_TRIAL_LICENSE_KEY`.
 Contact your Solo.io account team if you need one. Export it and check the expiry before you start:
 
 ```bash

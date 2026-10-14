@@ -49,6 +49,30 @@ kubectl get crd gateways.gateway.networking.k8s.io --context $KUBECONTEXT_CLUSTE
 > kubectl apply -f gke/resourcequota.yaml --context $KUBECONTEXT_CLUSTER2
 > ```
 
+> **Cilium with kube-proxy replacement:** the istio-cni values below stay the same. Before you install istio-cni, check the Cilium settings ambient needs:
+> ```bash
+> kubectl -n kube-system get cm cilium-config --context $KUBECONTEXT_CLUSTER2 -o jsonpath='{.data}' | tr ',' '\n' \
+>   | grep -E '"(kube-proxy-replacement|bpf-lb-sock-hostns-only|cni-exclusive|enable-bpf-masquerade)"'
+> ```
+> Expected output (`enable-bpf-masquerade` is absent or `"false"`):
+> ```
+> "bpf-lb-sock-hostns-only":"true"
+> "cni-exclusive":"false"
+> "kube-proxy-replacement":"true"
+> ```
+> If a value differs, set it in the Cilium Helm values and upgrade the Cilium release:
+> ```yaml
+> cni:
+>   exclusive: false          # keeps the istio-cni plugin in Cilium's chained CNI config
+> socketLB:
+>   hostNamespaceOnly: true   # pods keep the Service IP, so ztunnel picks the endpoint
+> bpf:
+>   masquerade: false         # the default. eBPF masquerading breaks ambient health probes
+> ```
+> With `cni.exclusive=true`, Cilium removes the istio-cni plugin from the CNI config, and new pods start without ztunnel redirection.
+>
+> Sources: Istio [platform prerequisites for Cilium](https://istio.io/latest/docs/ambient/install/platform-prerequisites/#cilium) and Cilium [Istio integration](https://docs.cilium.io/en/stable/network/servicemesh/istio/).
+
 Install istio-cni
 
 > **GKE users:** Uncomment `platform: gke` under `global` in the values below before running this command.

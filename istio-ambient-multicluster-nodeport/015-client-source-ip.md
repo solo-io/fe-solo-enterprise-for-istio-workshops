@@ -23,7 +23,7 @@ A request from outside the cluster passes through up to three components that ca
 | Component | What it does to the source address | How to keep the client address |
 |---|---|---|
 | External load balancer (hardware, or cloud) | A proxying load balancer opens a new connection, so the source becomes the load balancer | PROXY protocol: the load balancer sends the client address in a header at the start of the connection |
-| kube-proxy, for a `NodePort` or `LoadBalancer` Service | `externalTrafficPolicy: Cluster` can forward to a pod on any node, and SNATs the connection | `externalTrafficPolicy: Local`: only nodes with a gateway pod accept traffic, and kube-proxy keeps the source |
+| kube-proxy or Cilium kube-proxy replacement, for a `NodePort` or `LoadBalancer` Service | `externalTrafficPolicy: Cluster` can forward to a pod on any node, and SNATs the connection | `externalTrafficPolicy: Local`: only nodes with a gateway pod accept traffic, and kube-proxy keeps the source |
 | The ingress gateway | Terminates the client connection and opens a new one to the backend | A gateway policy writes the source address the gateway saw into `X-Forwarded-For` |
 
 After the gateway, the backend's L4 source is always the gateway, or the peer cluster's east-west gateway for a cross-cluster call. The client IP reaches the backend as an HTTP header, and it reaches observability tools through the gateway's log.
@@ -245,6 +245,8 @@ RequestHeader=X-Forwarded-For:10.244.0.0
 ```
 
 `X-Forwarded-For` should hold the client address, `172.30.0.5`, but holds a cluster1-internal address instead: kube-proxy SNATs NodePort traffic under `Cluster`. `IP=10.244.1.74` is the edge gateway pod, which is the backend's L4 source in every case.
+
+> **Cilium with kube-proxy replacement:** Cilium SNATs only when it forwards the NodePort connection to a pod on another node. Via the gateway's node, `X-Forwarded-For` holds the client node address, the same result as `Local` below. Via the other node, it holds that node's `cilium_host` address from its pod CIDR. Cilium's DSR mode (`loadBalancer.mode=dsr`) keeps the client address on the other-node path too. This workshop tested the default SNAT mode only.
 
 ## With externalTrafficPolicy Local
 

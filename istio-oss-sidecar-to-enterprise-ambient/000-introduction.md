@@ -36,10 +36,11 @@ Now that workloads are in ambient mode, apply Istio AuthorizationPolicy to estab
 - Solo Istio 1.30.5-solo (target)
 
 ## License Key Details
-This workshop requires a Solo Trial License Key, exported as `SOLO_TRIAL_LICENSE_KEY` in lab `004`.
-Contact your Solo.io account team if you need one. Check the expiry before you start:
+This workshop requires a Solo Trial License Key, exported as `SOLO_TRIAL_LICENSE_KEY`.
+Contact your Solo.io account team if you need one. Export it and check the expiry before you start:
 
 ```bash
+export SOLO_TRIAL_LICENSE_KEY=<paste-your-key>
 for SEG in $(echo "$SOLO_TRIAL_LICENSE_KEY" | tr '.' ' '); do
   case $(( ${#SEG} % 4 )) in 2) SEG="${SEG}==" ;; 3) SEG="${SEG}=" ;; esac
   EXP=$(printf '%s' "$SEG" | tr '_-' '/+' | base64 -d 2>/dev/null \
