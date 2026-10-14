@@ -44,7 +44,7 @@ done
 helm uninstall cert-manager -n cert-manager --kube-context $KUBECONTEXT_CLUSTER1 --ignore-not-found
 ```
 
-The `ingress-edge` Gateway, its parameters and policy (lab `015`) live in `agentgateway-system`, which the agentgateway section deletes. The rewrite policy from lab `017` lives in `api-echo`, which the loop above deletes. The NodePort pins (labs `013` and `019`), the waypoints (lab `009`) and every `AuthorizationPolicy` and `PeerAuthentication` (labs `008`, `009`, `011`) live in namespaces that the Istio section deletes.
+Everything else the add-on labs created lives in namespaces that the sections below delete.
 
 ## Agentgateway (lab `005`)
 
@@ -63,17 +63,17 @@ done
 
 ## Istio, gateways and Bookinfo (labs `001`-`007`)
 
-The loop below removes every namespace, gateway and Helm release the core labs create. Deleting the
-Gateways first removes the east-west gateway deployments and their Services, and
-the remote-peer Gateways end the peering. The `kubectl get crd` guard keeps the loop safe to rerun after
-you remove the CRDs below: `--ignore-not-found` forgives a missing resource but still errors on a
-missing CRD.
+The loop below removes every namespace, gateway and Helm release the core labs create. It uninstalls the peering releases first, then the gateways, Istio and the namespaces. It is safe to rerun.
 
 ```bash
 for CONTEXT in "${CLUSTERS[@]}"; do
   echo "Cleaning up $CONTEXT..."
 
-  # Routes and gateways (labs 006, 007, 009, 019)
+  # Peering releases (labs 007 and 019)
+  helm uninstall peering-remote -n istio-gateways --kube-context $CONTEXT --ignore-not-found
+  helm uninstall peering-eastwest -n istio-gateways --kube-context $CONTEXT --ignore-not-found
+
+  # Routes and gateways (labs 006, 009)
   if kubectl get crd gateways.gateway.networking.k8s.io --context $CONTEXT &>/dev/null; then
     kubectl delete httproute,grpcroute -n bookinfo-frontends --all --context $CONTEXT --ignore-not-found
     kubectl delete gateways -n bookinfo-backends --all --context $CONTEXT --ignore-not-found
@@ -97,13 +97,19 @@ Confirm nothing is left:
 
 ```bash
 for CONTEXT in "${CLUSTERS[@]}"; do
-  echo "--- $CONTEXT ---"
-  kubectl get ns --context $CONTEXT --no-headers | grep -E "bookinfo|istio|agentgateway|tenant-a|perf|monitoring|cert-manager|client-ip|outside|egress|partner|grpc-echo|api-echo"
-  helm list -A --kube-context $CONTEXT -q
+  LEFT=$( { kubectl get ns --context $CONTEXT -o name | grep -E "bookinfo|istio|agentgateway|tenant-a|perf|monitoring|cert-manager|client-ip|outside|egress|partner|grpc-echo|api-echo"
+            helm list -A --kube-context $CONTEXT -q | grep -E "istio|ztunnel|peering|agentgateway|cert-manager"; } | tr '\n' ' ')
+  [ -z "$LEFT" ] && echo "$CONTEXT: clean" || echo "$CONTEXT: LEFT $LEFT"
 done
 ```
 
-Both commands should print only the `--- <context> ---` lines.
+Expected output (plus `cluster3` and `cluster4` if you ran lab `019`):
+```
+cluster1: clean
+cluster2: clean
+```
+
+A namespace that is still terminating shows up as `LEFT namespace/<name>`. Wait a few seconds and run the check again.
 
 ## CRDs
 
@@ -127,4 +133,10 @@ Lab `002` writes two files into this directory, and labs `012`, `014`, `017` and
 rm -f shared-root-trust-secret.yaml solo-istioctl
 rm -f canary-targets.txt canary-report.txt internal-root-ca.pem ingress2gateway upgrade-load.bin upgrade-load-snapshot.bin
 rm -rf upgrade-values
+```
+
+If you merged kubeconfig files in lab `019`, remove the merged file and return to your default kubeconfig:
+```bash
+rm -f /tmp/merged-kubeconfig.yaml
+unset KUBECONFIG
 ```

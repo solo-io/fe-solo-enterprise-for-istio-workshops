@@ -9,7 +9,7 @@
 ## Prerequisites
 - This lab assumes you have read through and completed any setup from the `000` labs
 
-Ensure the following environment variables are set from the previous labs:
+Set the context and mesh names for both clusters:
 ```bash
 export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context name
 export MESH_NAME_CLUSTER1=cluster1    # Recommended to keep as cluster1 for POC
@@ -18,77 +18,45 @@ export KUBECONTEXT_CLUSTER2=cluster2  # Replace with your actual kubectl context
 export MESH_NAME_CLUSTER2=cluster2    # Recommended to keep as cluster2 for POC
 ```
 
-## Deploy Bookinfo on cluster1
+## Deploy Bookinfo on both clusters
 
-Deploy bookinfo frontends in bookinfo-frontends namespace
+Deploy the bookinfo frontends and backends in each cluster, and set `CLUSTER_NAME` on reviews so each page shows which cluster served it:
 ```bash
-kubectl apply -f bookinfo/bookinfo-frontends.yaml --context $KUBECONTEXT_CLUSTER1
+for C in "$KUBECONTEXT_CLUSTER1=$MESH_NAME_CLUSTER1" "$KUBECONTEXT_CLUSTER2=$MESH_NAME_CLUSTER2"; do
+  CTX=${C%%=*}; MESH=${C#*=}
+  kubectl apply -f bookinfo/bookinfo-frontends.yaml -f bookinfo/bookinfo-backends.yaml --context $CTX
+  kubectl --context $CTX -n bookinfo-backends set env deploy -l app=reviews CLUSTER_NAME=$MESH
+done
 ```
 
-Deploy bookinfo backends in bookinfo-backends namespace
+Wait for the applications to be ready:
 ```bash
-kubectl apply -f bookinfo/bookinfo-backends.yaml --context $KUBECONTEXT_CLUSTER1
-```
-
-Wait for the applications to be deployed
-```bash
-for deploy in $(kubectl get deploy -n bookinfo-frontends --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.items[*].metadata.name}'); do
-  echo "Waiting for frontend deployment '$deploy' to be ready in $KUBECONTEXT_CLUSTER1..."
-  kubectl rollout status deploy/"$deploy" -n bookinfo-frontends --watch --timeout=90s --context $KUBECONTEXT_CLUSTER1
+for CTX in $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2; do
+  for NS in bookinfo-frontends bookinfo-backends; do
+    kubectl --context $CTX -n $NS rollout status deploy --timeout=120s
   done
-
-for deploy in $(kubectl get deploy -n bookinfo-backends --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.items[*].metadata.name}'); do
-  echo "Waiting for backend deployment '$deploy' to be ready in $KUBECONTEXT_CLUSTER1..."
-  kubectl rollout status deploy/"$deploy" -n bookinfo-backends --watch --timeout=90s --context $KUBECONTEXT_CLUSTER1
-  done
+done
 ```
 
-Update the reviews service to display which cluster it is coming from
+## Check the application
+
+Port-forward to productpage in each cluster and request the page:
 ```bash
-kubectl --context $KUBECONTEXT_CLUSTER1 -n bookinfo-backends set env deploy -l app=reviews CLUSTER_NAME=$MESH_NAME_CLUSTER1
+for CTX in $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2; do
+  kubectl port-forward svc/productpage -n bookinfo-frontends 9080:9080 --context $CTX >/dev/null &
+  PF=$!; sleep 2
+  echo "$CTX: $(curl -s -o /dev/null -w '%{http_code}' http://localhost:9080/productpage)"
+  kill $PF; wait $PF 2>/dev/null
+done
 ```
 
-Port forward to productpage in bookinfo-frontends namespace to validate application is working
-```bash
-kubectl port-forward svc/productpage -n bookinfo-frontends 9080:9080 --context $KUBECONTEXT_CLUSTER1
+Expected output:
 ```
-Navigate to http://localhost:9080/productpage
-
-## Deploy Bookinfo on cluster2
-
-Deploy bookinfo frontends in bookinfo-frontends namespace
-```bash
-kubectl apply -f bookinfo/bookinfo-frontends.yaml --context $KUBECONTEXT_CLUSTER2
+cluster1: 200
+cluster2: 200
 ```
 
-Deploy bookinfo backends in bookinfo-backends namespace
-```bash
-kubectl apply -f bookinfo/bookinfo-backends.yaml --context $KUBECONTEXT_CLUSTER2
-```
-
-Wait for the applications to be deployed
-```bash
-for deploy in $(kubectl get deploy -n bookinfo-frontends --context $KUBECONTEXT_CLUSTER2 -o jsonpath='{.items[*].metadata.name}'); do
-  echo "Waiting for frontend deployment '$deploy' to be ready in $KUBECONTEXT_CLUSTER2..."
-  kubectl rollout status deploy/"$deploy" -n bookinfo-frontends --watch --timeout=90s --context $KUBECONTEXT_CLUSTER2
-  done
-
-for deploy in $(kubectl get deploy -n bookinfo-backends --context $KUBECONTEXT_CLUSTER2 -o jsonpath='{.items[*].metadata.name}'); do
-  echo "Waiting for backend deployment '$deploy' to be ready in $KUBECONTEXT_CLUSTER2..."
-  kubectl rollout status deploy/"$deploy" -n bookinfo-backends --watch --timeout=90s --context $KUBECONTEXT_CLUSTER2
-  done
-```
-
-Update the reviews service to display which cluster it is coming from
-```bash
-kubectl --context $KUBECONTEXT_CLUSTER2 -n bookinfo-backends set env deploy -l app=reviews CLUSTER_NAME=$MESH_NAME_CLUSTER2
-```
-
-Port forward to productpage in bookinfo-frontends namespace to validate application is working
-```bash
-kubectl port-forward svc/productpage -n bookinfo-frontends 9080:9080 --context $KUBECONTEXT_CLUSTER2
-```
-Navigate to http://localhost:9080/productpage
+To browse the page, run `kubectl port-forward svc/productpage -n bookinfo-frontends 9080:9080 --context $KUBECONTEXT_CLUSTER1` and open http://localhost:9080/productpage. Press Ctrl+C when done.
 
 ## Next Steps
 At this point we have completed the following objectives

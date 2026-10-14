@@ -163,13 +163,15 @@ spec:
         from: All
 EOF
 kubectl rollout status deploy/egress-waypoint -n egress --watch --timeout=120s --context $KUBECONTEXT_CLUSTER1
-kubectl get pods -n egress -o wide --context $KUBECONTEXT_CLUSTER1
+kubectl get pods -n egress -o custom-columns=POD:.metadata.name,NODE:.spec.nodeName --context $KUBECONTEXT_CLUSTER1
+echo "egress node: $EGRESS_NODE"
 ```
 
-Expected output (abridged):
+Expected output:
 ```
-NAME                               READY   STATUS    RESTARTS   AGE   IP            NODE
-egress-waypoint-5644cddc6c-85pxr   1/1     Running   0          8s    10.244.0.17   cluster1
+POD                                NODE
+egress-waypoint-5644cddc6c-85pxr   cluster1
+egress node: cluster1
 ```
 
 ## Route the Partner Through the Egress Waypoint
@@ -203,16 +205,16 @@ sleep 3
 Call the partner by hostname from `reviews-v1` and from the probe pod:
 ```bash
 echo "reviews-v1 on $REVIEWS_NODE: $(kubectl exec deploy/reviews-v1 -n bookinfo-backends --context $KUBECONTEXT_CLUSTER1 -- curl -s -m 5 -i http://partner-api.example.com/ | grep -E '^server:|^IP=' | tr -d '\r' | tr '\n' ' ')"
-echo "egress-probe on $OTHER_NODE: $(kubectl exec egress-probe -n default --context $KUBECONTEXT_CLUSTER1 -- curl -s -m 5 -i http://partner-api.example.com/ 2>&1 | grep -E '^server:|^IP=|resolve' | tr -d '\r' | tr '\n' ' ')"
+echo "egress-probe on $OTHER_NODE: $(kubectl exec egress-probe -n default --context $KUBECONTEXT_CLUSTER1 -- curl -sS -m 5 -i http://partner-api.example.com/ 2>&1 | grep -E '^server:|^IP=|resolve' | tr -d '\r' | tr '\n' ' ')"
 ```
 
 Expected output:
 ```
-reviews-v1 on worker-1: server: istio-envoy IP=172.30.0.2 
-egress-probe on cluster1: 
+reviews-v1 on worker-1: server: istio-envoy IP=172.30.0.2
+egress-probe on cluster1: curl: (6) Could not resolve host: partner-api.example.com
 ```
 
-`reviews-v1` runs on `worker-1`, and the partner now sees `172.30.0.2`, the egress node. `server: istio-envoy` shows that the egress waypoint handled the request. The probe pod printed nothing: it runs in the `default` namespace, outside the mesh, so ztunnel's DNS proxy does not serve it and `partner-api.example.com` does not resolve. Only mesh workloads can use the mesh hostname.
+`reviews-v1` runs on `worker-1`, and the partner now sees `172.30.0.2`, the egress node. `server: istio-envoy` shows that the egress waypoint handled the request. The probe pod runs outside the mesh, so ztunnel's DNS proxy does not serve it and `partner-api.example.com` does not resolve. Only mesh workloads can use the mesh hostname.
 
 ## Allow One Identity and One Method
 
@@ -269,7 +271,7 @@ reviews-v1 direct to 172.30.0.5: IP=172.30.0.3
 ztunnel passes the connection through, because no `ServiceEntry` matches the address. Ambient mode applies egress policy to the destinations you declare, and leaves other outbound connections to the network layer. Close the direct path there:
 
 - Allow-list only the egress node IPs on the partner's firewall. A direct connection then arrives from a non-egress node and the partner rejects it, as `172.30.0.3` would be here.
-- Block outbound traffic from application pods with a `NetworkPolicy` from your CNI, and allow it only from the `egress` namespace. Flannel, the CNI in the vind clusters this lab was validated on, does not enforce `NetworkPolicy`, so this lab does not apply one.
+- Block outbound traffic from application pods with a `NetworkPolicy` from your CNI, and allow it only from the `egress` namespace. Some CNIs, such as Flannel, do not enforce `NetworkPolicy`. On those clusters, rely on the firewall allow-list.
 
 > **Every cluster and every site gets its own egress nodes.** A workload that moves from cluster1 to cluster2 leaves through cluster2's egress waypoint. Run the same `egress` namespace, ConfigMap, waypoint, `ServiceEntry` and policy in every cluster, and give the partner the egress node IPs of every cluster as one allow-list. That list changes when you add or replace egress nodes, not when workloads move.
 

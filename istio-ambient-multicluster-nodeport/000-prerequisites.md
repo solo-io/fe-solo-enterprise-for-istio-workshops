@@ -2,14 +2,14 @@
 1. A valid Solo.io license key, exported as `$SOLO_TRIAL_LICENSE_KEY`
 2. solo-istioctl installed ([Solo istioCTL installation](000-tools.md#solos-istioctl-binary))
 3. helm installed
-4. A kubernetes version >1.29
+4. Kubernetes 1.29 or later
 5. `openssl` available in your shell. Lab `002` uses it to generate the shared root trust CA. macOS and Linux include it by default. Windows users must use WSL or Git Bash.
 6. Vegeta for load generation ([Vegeta installation](000-tools.md#vegeta-cli-load-generator)). Labs `012` and `018` use it
-7. `curl` with HTTPS support and `openssl` on your shell host (lab `014` verifies certificates with both)
+7. `curl` with HTTPS support (lab `014` verifies certificates with `curl` and `openssl`)
 8. Access to `github.com` release downloads (lab `017` downloads the `ingress2gateway` binary)
 9. Two more Kubernetes clusters, `cluster3` and `cluster4` (lab `019` only)
 
-> **Network:** the clusters peer over NodePorts. The nodes of each cluster must reach the node InternalIPs of every other cluster on the NodePort range (default `30000-32767`), for the two NodePorts that map to **15008** (HBONE data plane) and **15012** (xDS/CA and registry sync) on the east-west gateway. Full list: [Ports used in an Istio ambient mesh](../reference/ambient-ports.md).
+> **Network:** the clusters peer over NodePorts. Lab `007` fixes the east-west NodePorts at `31508` for **15008** (HBONE data plane) and `31512` for **15012** (xDS/CA and registry sync). The nodes of each cluster must reach every node InternalIP of the other clusters on `31508`, and the peer node that lab `007` selects for xDS on `31512`. Full list: [Ports used in an Istio ambient mesh](../reference/ambient-ports.md).
 
 ### Repos/Images:
 
@@ -29,6 +29,11 @@ helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/istiod --version 1.28.10
 helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/cni --version 1.28.10-patch0-solo
 
 helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/ztunnel --version 1.28.10-patch0-solo
+```
+
+Solo peering Helm chart (labs `007`, `013`, `019`)
+```bash
+helm pull oci://us-docker.pkg.dev/soloio-img/istio-helm/peering --version 1.29.7-patch0-solo
 ```
 
 Upgrade target for lab `018`

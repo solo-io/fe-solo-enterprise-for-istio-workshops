@@ -1,8 +1,8 @@
 # Multicluster: Global Mesh over NodePort
 
 # Objectives
-- Expose each cluster's east-west gateway as a NodePort Service
-- Peer the two clusters by pointing each remote peer at the other cluster's node IPs and NodePorts
+- Install each cluster's east-west gateway from Solo's `peering` Helm chart, as a NodePort Service with fixed NodePorts
+- Peer the two clusters with the same chart, pointing each remote peer at a node of the other cluster
 - Configure a globally available service using labels (productpage)
 - Reconfigure ingress to global service hostname (*.<namespace>.mesh.internal)
 - Fail productpage over from cluster1 to cluster2 and back
@@ -21,212 +21,178 @@ export MESH_NAME_CLUSTER1=cluster1    # Recommended to keep as cluster1 for POC
 
 export KUBECONTEXT_CLUSTER2=cluster2  # Replace with your actual kubectl context name
 export MESH_NAME_CLUSTER2=cluster2    # Recommended to keep as cluster2 for POC
-[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
+[ -n "$INGRESS_ADDR" ] || echo "WARNING: INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
 ```
 
-## Background
-
-Each cluster holds two Gateways for peering:
-
-| Gateway | Class | What it represents |
-|---|---|---|
-| `istio-eastwest` | `istio-eastwest` | The local east-west gateway. A `NodePort` Service receives HBONE (`15008`) and xDS (`15012`) traffic from the peer cluster |
-| `istio-remote-peer-<peer>` | `istio-remote` | The peer cluster. Its addresses are the peer's node InternalIPs, and its listener ports are the peer's two NodePorts |
-
-istiod in each cluster connects to the peer's istiod through the `xds-tls` listener to exchange service and workload information. ztunnel sends cross-cluster requests as HBONE to the `cross-network` listener. Both listeners use node IPs and NodePorts.
-
-> **Why not `solo-istioctl multicluster link`?** In 1.28, `link` reads the peer address from a LoadBalancer on the east-west gateway. With a NodePort Service it stops with `services found with "istio.io/expose-istiod" label, but none have a load balancer`. This lab writes the same `istio-remote-peer-<peer>` Gateways with `kubectl` instead.
-
-> **Note:** Solo also documents a native NodePort mode (`--data-plane-service-types nodeport` on `expose`). It is beta, it sends only the HBONE data plane over NodePorts, and it still needs a stable LoadBalancer address for xDS on `15012`. Consider it when your clusters have a LoadBalancer for the control plane. See [LoadBalancer vs NodePort for east-west and peering gateways](https://docs.solo.io/istio/1.30.x/ambient/multicluster/best-practices/peering-recs/).
-
-## Create the east-west gateways
-
-Create the istio-gateways namespace
+The peering blocks below loop over a list of clusters. Each entry is `<kubectl context>=<mesh name>`. Lab `019` appends two clusters to this list:
 ```bash
-kubectl create ns istio-gateways --context $KUBECONTEXT_CLUSTER1 --dry-run=client -o yaml | kubectl apply --context $KUBECONTEXT_CLUSTER1 -f -
-kubectl create ns istio-gateways --context $KUBECONTEXT_CLUSTER2 --dry-run=client -o yaml | kubectl apply --context $KUBECONTEXT_CLUSTER2 -f -
-```
-
-Use Solo `istioctl` to generate the east-west gateways, and add the `networking.istio.io/service-type: NodePort` annotation before you apply them. The annotation makes Istio create the `istio-eastwest` Service as a `NodePort`. Without the annotation, `expose` creates a `LoadBalancer` Service, and a cluster with a load balancer controller then provisions a cloud load balancer for the istiod and HBONE ports.
-```bash
-for context in $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2; do
-  ./solo-istioctl multicluster expose --namespace istio-gateways --context $context --generate \
-    | kubectl annotate --local -f - networking.istio.io/service-type=NodePort -o yaml \
-    | kubectl apply --context $context -f -
-done
-```
-
-> **Already ran plain `expose` without the annotation?** Add the annotation to the existing Gateway in each cluster. Istio changes the Service to `NodePort` in place and keeps its NodePorts:
-> ```bash
-> kubectl annotate gateway istio-eastwest -n istio-gateways networking.istio.io/service-type=NodePort --overwrite --context $KUBECONTEXT_CLUSTER1
-> ```
-
-Wait for the east-west gateways to be deployed
-```bash
-for deploy in $(kubectl get deploy -n istio-gateways --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.items[*].metadata.name}'); do
-  echo "Waiting for e/w gateway deployment '$deploy' to be ready in $KUBECONTEXT_CLUSTER1..."
-  kubectl rollout status deploy/"$deploy" -n istio-gateways --watch --timeout=90s --context $KUBECONTEXT_CLUSTER1
-  done
-
-for deploy in $(kubectl get deploy -n istio-gateways --context $KUBECONTEXT_CLUSTER2 -o jsonpath='{.items[*].metadata.name}'); do
-  echo "Waiting for e/w gateway deployment '$deploy' to be ready in $KUBECONTEXT_CLUSTER2..."
-  kubectl rollout status deploy/"$deploy" -n istio-gateways --watch --timeout=90s --context $KUBECONTEXT_CLUSTER2
-  done
-```
-
-Check that the Service type is `NodePort` in both clusters
-```bash
-kubectl get svc istio-eastwest -n istio-gateways --context $KUBECONTEXT_CLUSTER1
-kubectl get svc istio-eastwest -n istio-gateways --context $KUBECONTEXT_CLUSTER2
-```
-
-Expected output (IPs and NodePorts differ on your machine):
-```
-NAME             TYPE       CLUSTER-IP      EXTERNAL-IP   PORT(S)                                           AGE
-istio-eastwest   NodePort   10.105.232.25   <none>        15021:30566/TCP,15008:30224/TCP,15012:32326/TCP   18s
-NAME             TYPE       CLUSTER-IP      EXTERNAL-IP   PORT(S)                                           AGE
-istio-eastwest   NodePort   10.102.83.177   <none>        15021:30104/TCP,15008:32220/TCP,15012:32597/TCP   18s
-```
-
-Each cluster now has a NodePort for HBONE (`15008`) and one for xDS (`15012`). In this example cluster2 serves HBONE on `32220` and xDS on `32597`.
-
-## Peer the clusters over NodePort
-
-A remote-peer Gateway holds node IPs, so it goes stale when a listed node is replaced. This workshop points each peer at the other cluster's control-plane nodes. The east-west gateway pods stay on the workers. kube-proxy on each control-plane node forwards the NodePort traffic to a gateway pod in the same cluster, like an L3 proxy. This works because `svc/istio-eastwest` uses `externalTrafficPolicy: Cluster`, the default. With `Local`, a node without a gateway pod drops the traffic. Check the policy in each cluster:
-```bash
-kubectl get svc istio-eastwest -n istio-gateways --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.spec.externalTrafficPolicy}{"\n"}'
-kubectl get svc istio-eastwest -n istio-gateways --context $KUBECONTEXT_CLUSTER2 -o jsonpath='{.spec.externalTrafficPolicy}{"\n"}'
+ALL_CLUSTERS=("$KUBECONTEXT_CLUSTER1=$MESH_NAME_CLUSTER1" "$KUBECONTEXT_CLUSTER2=$MESH_NAME_CLUSTER2")
+printf '%s\n' "${ALL_CLUSTERS[@]}"
 ```
 
 Expected output:
 ```
-Cluster
-Cluster
+cluster1=cluster1
+cluster2=cluster2
 ```
 
-Select the control-plane nodes as the peer addresses. The nodes of each cluster must reach the other cluster's control-plane nodes on the NodePort range:
+## Background
+
+Solo's `peering` Helm chart creates the two Gateways that peering needs, in two releases per cluster:
+
+| Release | Gateway | Class | What it represents |
+|---|---|---|---|
+| `peering-eastwest` | `istio-eastwest` | `istio-eastwest` | The local east-west gateway. Its `NodePort` Service receives HBONE (`15008`) and xDS (`15012`) traffic from the peers on fixed NodePorts |
+| `peering-remote` | `istio-remote-peer-<peer>` | `istio-remote` | One Gateway per peer cluster. Its address is a node InternalIP in the peer, and its `xds-tls` listener port is the peer's xDS NodePort |
+
+istiod in each cluster connects to the peer's istiod through that address and the xDS NodePort, and the two exchange service and workload information. With the NodePort data plane, ztunnel sends cross-cluster HBONE to the peer nodes that run an east-west gateway pod, on the HBONE NodePort. Lab `013` shows what happens when that pod moves.
+
+> **Versions.** This workshop installs the `1.29.7-patch0` peering chart on Istio `1.28.10-patch0`. The releases stay in place through the upgrade and rollback in lab `018`. The NodePort data plane is a beta feature of Solo Istio.
+
+## Set the chart version and NodePorts
+
+Every cluster uses the same three NodePorts. Each cluster has its own NodePort range, so the values can repeat across clusters, and your firewall rules open the same two ports, HBONE and xDS, toward every cluster. Pick values in the NodePort range (default `30000-32767`) that no other Service in the cluster holds:
+```bash
+export PEERING_CHART_VERSION=1.29.7-patch0
+export EW_STATUS_NODEPORT=31521
+export EW_HBONE_NODEPORT=31508
+export EW_XDS_NODEPORT=31512
+```
+
+## Create the east-west gateways
+
+Install the `peering-eastwest` release in each cluster, as a `NodePort` Service with the NodePort data plane and the three fixed NodePorts:
+```bash
+for entry in "${ALL_CLUSTERS[@]}"; do
+  helm upgrade --install peering-eastwest oci://us-docker.pkg.dev/soloio-img/istio-helm/peering \
+    --version $PEERING_CHART_VERSION-solo -n istio-gateways --create-namespace \
+    --kube-context "${entry%%=*}" -f - <<EOF | grep -E "^STATUS"
+eastwest:
+  create: true
+  cluster: ${entry#*=}
+  network: ${entry#*=}
+  serviceType: NodePort
+  dataplaneServiceTypes: [nodeport]
+  service:
+    spec:
+      ports:
+      # Keep Istio's default port names
+      - name: status-port
+        port: 15021
+        nodePort: $EW_STATUS_NODEPORT
+      - name: tls-hbone
+        port: 15008
+        nodePort: $EW_HBONE_NODEPORT
+      - name: tls-xds
+        port: 15012
+        nodePort: $EW_XDS_NODEPORT
+remote:
+  create: false
+EOF
+done
+```
+
+Expected output:
+```
+STATUS: deployed
+STATUS: deployed
+```
+
+Istio creates the gateway Deployment from the Gateway a few seconds later. Wait for it in both clusters:
+```bash
+for entry in "${ALL_CLUSTERS[@]}"; do
+  for i in $(seq 1 30); do
+    kubectl get deploy istio-eastwest -n istio-gateways --context "${entry%%=*}" &>/dev/null && break
+    sleep 2
+  done
+  kubectl rollout status deploy/istio-eastwest -n istio-gateways --watch --timeout=90s --context "${entry%%=*}"
+done
+```
+
+Check the Service in both clusters. A remote peer points at one node of the peer cluster, and kube-proxy on that node forwards the NodePort traffic to a gateway pod in the same cluster. That needs `externalTrafficPolicy: Cluster`, the default. With `Local`, a node without a gateway pod drops the traffic:
+```bash
+for entry in "${ALL_CLUSTERS[@]}"; do
+  echo "${entry%%=*}: $(kubectl get svc istio-eastwest -n istio-gateways --context "${entry%%=*}" --no-headers \
+    -o custom-columns='TYPE:.spec.type,NODEPORTS:.spec.ports[*].nodePort,POLICY:.spec.externalTrafficPolicy')"
+done
+```
+
+Expected output:
+```
+cluster1: NodePort   31521,31508,31512   Cluster
+cluster2: NodePort   31521,31508,31512   Cluster
+```
+
+Both clusters serve HBONE on `31508` and xDS on `31512`. A recreated Service gets the same NodePorts.
+
+> **A fixed port is already taken?** The Service fails to update if another Service in the cluster holds the port. `kubectl get svc -A --context <ctx> | grep <port>` finds the holder. Pick other values, export them, and run the install loop again.
+
+## Peer the clusters over NodePort
+
+A remote peer holds one address, a node InternalIP in the peer cluster. This workshop points each peer at the other cluster's control-plane node, because control-plane node IPs change less often than worker IPs. The nodes of each cluster must reach that node on the xDS NodePort, and every node of the peer on the HBONE NodePort:
 ```bash
 export PEER_NODE_SELECTOR=node-role.kubernetes.io/control-plane
 ```
 
-> **Note:** Peering with `PEER_NODE_SELECTOR` set has proven more stable in deployments of this NodePort architecture, because control-plane node IPs change less often than worker IPs. An east-west gateway rollout that moves the pod to another node also leaves the peer addresses valid.
-
-The function below applies the `istio-remote-peer-<peer>` Gateway for one direction. Its addresses are the InternalIPs of the peer nodes that match `PEER_NODE_SELECTOR`. The Gateway name, trust domain and network come from the peer's mesh name, not from its kubectl context.
-
+`peering/peering.sh` defines `apply_remote_peers`. It installs the `peering-remote` release in one cluster, with one remote peer for every other cluster in `ALL_CLUSTERS`. Each peer's address is the InternalIP of the first peer node that matches `PEER_NODE_SELECTOR`. The Gateway name, trust domain and network come from the peer's mesh name. Load the file and print the function:
 ```bash
-apply_remote_peer() {
-  local LOCAL_CTX=$1 PEER_CTX=$2 PEER_MESH=$3 HBONE_PORT XDS_PORT PEER_IPS PEER_ADDRESSES
-  HBONE_PORT=$(kubectl get svc istio-eastwest -n istio-gateways --context $PEER_CTX \
-    -o jsonpath='{.spec.ports[?(@.port==15008)].nodePort}')
-  XDS_PORT=$(kubectl get svc istio-eastwest -n istio-gateways --context $PEER_CTX \
-    -o jsonpath='{.spec.ports[?(@.port==15012)].nodePort}')
-  if [ -n "$PEER_NODE_SELECTOR" ]; then
-    PEER_IPS=$(kubectl get nodes -l "$PEER_NODE_SELECTOR" --context $PEER_CTX \
-      -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address}{"\n"}{end}')
-  else
-    PEER_IPS=$(kubectl get pods -n istio-gateways -l gateway.networking.k8s.io/gateway-name=istio-eastwest \
-      --field-selector=status.phase=Running \
-      --context $PEER_CTX -o jsonpath='{range .items[*]}{.status.hostIP} {.metadata.deletionTimestamp}{"\n"}{end}' \
-      | awk 'NF == 1 { print $1 }')
-  fi
-  PEER_ADDRESSES=$(printf '%s\n' "$PEER_IPS" | sort -u \
-    | awk 'NF { printf "  - type: IPAddress\n    value: %s\n", $1 }')
-  if [ -z "$HBONE_PORT" ] || [ -z "$XDS_PORT" ] || [ -z "$PEER_ADDRESSES" ]; then
-    echo "No istio-eastwest NodePorts or peer node addresses found in $PEER_CTX. Finish the steps above in $PEER_CTX first."
-    return 1
-  fi
-  echo "istio-remote-peer-$PEER_MESH in $LOCAL_CTX: HBONE $HBONE_PORT, xDS $XDS_PORT"
-  kubectl apply --context $LOCAL_CTX -f - <<EOF
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: istio-remote-peer-$PEER_MESH
-  namespace: istio-gateways
-  annotations:
-    gateway.istio.io/service-account: istio-eastwest
-    gateway.istio.io/trust-domain: $PEER_MESH.local
-  labels:
-    topology.istio.io/cluster: $PEER_MESH
-    topology.istio.io/network: $PEER_MESH
-spec:
-  gatewayClassName: istio-remote
-  addresses:
-$PEER_ADDRESSES
-  listeners:
-  - name: cross-network
-    port: $HBONE_PORT
-    protocol: HBONE
-    tls:
-      mode: Passthrough
-  - name: xds-tls
-    port: $XDS_PORT
-    protocol: TLS
-    tls:
-      mode: Passthrough
-EOF
-}
-
-apply_remote_peer $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2 $MESH_NAME_CLUSTER2
-apply_remote_peer $KUBECONTEXT_CLUSTER2 $KUBECONTEXT_CLUSTER1 $MESH_NAME_CLUSTER1
+source peering/peering.sh
+sed -n '/^apply_remote_peers()/,/^}/p' peering/peering.sh
 ```
 
-The block is safe to run again. A second run updates the Gateways in place.
-
-> **Control-plane nodes out of reach?** On managed Kubernetes such as EKS, GKE and AKS, the control-plane nodes are missing from the node list, so the selector matches nothing and `apply_remote_peer` stops with `No istio-eastwest NodePorts or peer node addresses found`. The same applies when a firewall closes the NodePort range on the control-plane nodes. Unset the selector and run the two `apply_remote_peer` lines again. The peer addresses then default to the nodes that host a running `istio-eastwest` pod, skipping pods still terminating after a rollout. kube-proxy delivers to a gateway pod on the same node, so the extra node hop goes away. Those addresses change when the pod moves to another node, so run the two lines again after each east-west gateway rollout:
-> ```bash
-> unset PEER_NODE_SELECTOR
-> apply_remote_peer $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2 $MESH_NAME_CLUSTER2
-> apply_remote_peer $KUBECONTEXT_CLUSTER2 $KUBECONTEXT_CLUSTER1 $MESH_NAME_CLUSTER1
-> ```
-
-Look at the result in cluster1
+Run it in every cluster:
 ```bash
-kubectl get gateway istio-remote-peer-$MESH_NAME_CLUSTER2 -n istio-gateways --context $KUBECONTEXT_CLUSTER1 -o yaml
+for entry in "${ALL_CLUSTERS[@]}"; do
+  apply_remote_peers "${entry%%=*}"
+done
 ```
 
-Expected output (abridged; IPs and NodePorts differ on your machine):
+Expected output (addresses differ on your machine):
 ```
-metadata:
-  annotations:
-    gateway.istio.io/service-account: istio-eastwest
-    gateway.istio.io/trust-domain: cluster2.local
-  labels:
-    topology.istio.io/cluster: cluster2
-    topology.istio.io/network: cluster2
-  name: istio-remote-peer-cluster2
-  namespace: istio-gateways
-spec:
-  addresses:
-  - type: IPAddress
-    value: 172.30.0.4               # <-- cluster2 control-plane node (PEER_NODE_SELECTOR)
-  gatewayClassName: istio-remote
-  listeners:
-  - allowedRoutes:
-      namespaces:
-        from: Same
-    name: cross-network
-    port: 32220                     # <-- cluster2 NodePort for HBONE (15008)
-    protocol: HBONE
-    tls:
-      mode: Passthrough
-  - allowedRoutes:
-      namespaces:
-        from: Same
-    name: xds-tls
-    port: 32597                     # <-- cluster2 NodePort for xDS (15012)
-    protocol: TLS
-    tls:
-      mode: Passthrough
+istio-remote-peer-cluster2 in cluster1: xDS 172.30.0.4:31512
+STATUS: deployed
+istio-remote-peer-cluster1 in cluster2: xDS 172.30.0.2:31512
+STATUS: deployed
 ```
 
-> **Node IPs and NodePorts are read once.** If a listed peer node is replaced, or `svc/istio-eastwest` is recreated with new NodePorts, run the `apply_remote_peer` block again. Lab `013` detects both kinds of drift.
+The loop is safe to run again. A second run reads the peer addresses again and upgrades the releases in place.
+
+> **Control-plane nodes out of reach?** On managed Kubernetes such as EKS, GKE and AKS, the control-plane nodes are missing from the node list, so the selector matches nothing and `apply_remote_peers` stops with `No node in <context> matches PEER_NODE_SELECTOR`. The same applies when a firewall closes the NodePort range on the control-plane nodes. Set `PEER_NODE_SELECTOR` to a label on a node pool whose nodes change rarely, such as a dedicated gateway pool, and run the loop again.
+
+> **One address per peer.** If the peer node goes away, rerun `apply_remote_peers`. Lab `013` covers this.
+
+Print the address, port and listener of the remote peer in cluster1:
+```bash
+kubectl get gateway istio-remote-peer-$MESH_NAME_CLUSTER2 -n istio-gateways --context $KUBECONTEXT_CLUSTER1 \
+  -o jsonpath='{.spec.addresses[0].value}:{.spec.listeners[*].port} {.spec.listeners[*].name}{"\n"}'
+```
+
+Expected output (the address differs on your machine):
+```
+172.30.0.4:31512 xds-tls
+```
+
+The address is the cluster2 control-plane node, and the port is the cluster2 xDS NodePort. The Gateway has only the `xds-tls` listener. With the NodePort data plane, ztunnel takes the HBONE addresses from the node list that the peer's istiod sends.
 
 ## Verify the peering
 
-Wait for both remote-peer Gateways to be programmed
+Wait until both remote peers report a working peering, then list their conditions. Solo's peering controller adds three conditions to each remote-peer Gateway: `PeerConnected` for the xDS link, `PeeringSucceeded` for the first sync, and `PeerDataPlaneProgrammed` for the NodePort data plane:
 ```bash
-kubectl wait --for=condition=Programmed gateway/istio-remote-peer-$MESH_NAME_CLUSTER2 -n istio-gateways --timeout=120s --context $KUBECONTEXT_CLUSTER1
-kubectl wait --for=condition=Programmed gateway/istio-remote-peer-$MESH_NAME_CLUSTER1 -n istio-gateways --timeout=120s --context $KUBECONTEXT_CLUSTER2
+kubectl wait --for=condition=gloo.solo.io/PeerDataPlaneProgrammed gateway/istio-remote-peer-$MESH_NAME_CLUSTER2 -n istio-gateways --timeout=120s --context $KUBECONTEXT_CLUSTER1
+kubectl wait --for=condition=gloo.solo.io/PeerDataPlaneProgrammed gateway/istio-remote-peer-$MESH_NAME_CLUSTER1 -n istio-gateways --timeout=120s --context $KUBECONTEXT_CLUSTER2
+kubectl get gateway istio-remote-peer-$MESH_NAME_CLUSTER2 -n istio-gateways --context $KUBECONTEXT_CLUSTER1 \
+  -o jsonpath='{range .status.conditions[*]}{.type}={.status} {.message}{"\n"}{end}'
+```
+
+Expected output:
+```
+gateway.gateway.networking.k8s.io/istio-remote-peer-cluster2 condition met
+gateway.gateway.networking.k8s.io/istio-remote-peer-cluster1 condition met
+Accepted=True Resource accepted
+Programmed=True This Gateway is remote; Istio will not program it
+gloo.solo.io/PeerConnected=True 
+gloo.solo.io/PeeringSucceeded=True 
+gloo.solo.io/PeerDataPlaneProgrammed=True peering data plane programmed for cross-network traffic with NodePort service type
 ```
 
 Check the peering from both sides
@@ -242,19 +208,7 @@ Expected output (abridged):
      ✅ Connected to cluster2 via 172.30.0.4
 ```
 
-The check reports the ClusterIP of the `istio-eastwest` Service. Peers connect through the node IP and NodePort in their `istio-remote-peer-<peer>` Gateway.
-
-Confirm in the istiod logs that each cluster finished its first sync with the peer
-```bash
-kubectl logs -n istio-system deploy/istiod --context $KUBECONTEXT_CLUSTER1 | grep "sync complete" | grep "network=$MESH_NAME_CLUSTER2"
-kubectl logs -n istio-system deploy/istiod --context $KUBECONTEXT_CLUSTER2 | grep "sync complete" | grep "network=$MESH_NAME_CLUSTER1"
-```
-
-Expected output (one block per cluster):
-```
-2026-10-12T16:19:57.060028Z	info	peering	XDS sync complete, waiting for segment info...	cluster=cluster2 network=cluster2 mode=gateway
-2026-10-12T16:19:57.060038Z	info	peering	cluster cluster2 sync complete	cluster=cluster2 network=cluster2 mode=gateway
-```
+The check reports the ClusterIP of the `istio-eastwest` Service. Peers connect through the node IP and xDS NodePort in their `istio-remote-peer-<peer>` Gateway.
 
 ## Configure a global service
 
@@ -265,12 +219,12 @@ Label and annotate the `productpage` Service in each cluster:
 
 ```bash
 for context in $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2; do
-  kubectl --context ${context}  -n bookinfo-frontends label service productpage solo.io/service-scope=global --overwrite
-  kubectl --context ${context}  -n bookinfo-frontends annotate service productpage  networking.istio.io/traffic-distribution=PreferNetwork --overwrite
+  kubectl --context ${context} -n bookinfo-frontends label service productpage solo.io/service-scope=global --overwrite
+  kubectl --context ${context} -n bookinfo-frontends annotate service productpage networking.istio.io/traffic-distribution=PreferNetwork --overwrite
 done
 ```
 
-We should now see an automatically generated ServiceEntry referencing our global service in each cluster
+Check the generated ServiceEntry in each cluster:
 ```bash
 for CTX in "$KUBECONTEXT_CLUSTER1" "$KUBECONTEXT_CLUSTER2"; do
   echo "Checking for autogen global ServiceEntry in $CTX"
@@ -281,22 +235,33 @@ done
 Expected output:
 ```
 Checking for autogen global ServiceEntry in cluster1
-NAME                                     HOSTS                                              LOCATION        RESOLUTION   AGE
-autogen.bookinfo-frontends.productpage   ["productpage.bookinfo-frontends.mesh.internal"]   MESH_INTERNAL   STATIC       5s
+NAME                                      HOSTS                                              LOCATION        RESOLUTION   AGE
+autogen.bookinfo-frontends.productpage    ["productpage.bookinfo-frontends.mesh.internal"]   MESH_INTERNAL   STATIC       5s
+autogen.peering.istio-eastwest.cluster2   ["node.istio-eastwest.cluster2.mesh.internal"]     MESH_INTERNAL   STATIC       8s
 Checking for autogen global ServiceEntry in cluster2
-NAME                                     HOSTS                                              LOCATION        RESOLUTION   AGE
-autogen.bookinfo-frontends.productpage   ["productpage.bookinfo-frontends.mesh.internal"]   MESH_INTERNAL   STATIC       5s
+NAME                                      HOSTS                                              LOCATION        RESOLUTION   AGE
+autogen.bookinfo-frontends.productpage    ["productpage.bookinfo-frontends.mesh.internal"]   MESH_INTERNAL   STATIC       5s
+autogen.peering.istio-eastwest.cluster1   ["node.istio-eastwest.cluster1.mesh.internal"]     MESH_INTERNAL   STATIC       7s
 ```
 
-ztunnel in cluster1 now knows a network gateway for cluster2. Its address is the cluster2 node IP and HBONE NodePort from the remote-peer Gateway
+`autogen.peering.istio-eastwest.<peer>` comes from the NodePort data plane: it is the hostname of the peer's east-west gateway nodes.
+
+ztunnel in cluster1 now knows a network gateway for cluster2. Its address is a hostname, `node.istio-eastwest.cluster2.mesh.internal`, and the workloads behind it are the cluster2 nodes that run an east-west gateway pod. istiod generates one entry per node from what cluster2 reports
 ```bash
-./solo-istioctl zc all -n istio-system --context $KUBECONTEXT_CLUSTER1 -o json | grep -o "\"NetworkGateway/$MESH_NAME_CLUSTER2/[^\"]*\"" | sort -u
+./solo-istioctl zc workloads -n istio-system --context $KUBECONTEXT_CLUSTER1 | grep -E "NAMESPACE|NetworkGateway/$MESH_NAME_CLUSTER2|autogen.node.$MESH_NAME_CLUSTER2"
+kubectl get pods -n istio-gateways -l gateway.networking.k8s.io/gateway-name=istio-eastwest --context $KUBECONTEXT_CLUSTER2 \
+  -o jsonpath='{range .items[*]}{.metadata.name} {.spec.nodeName} {.status.hostIP}{"\n"}{end}'
 ```
 
-Expected output:
+Expected output (names and addresses differ on your machine):
 ```
-"NetworkGateway/cluster2/172.30.0.4/32220"
+NAMESPACE           POD NAME                                                                 ADDRESS                                    NODE     WAYPOINT PROTOCOL
+istio-gateways      NetworkGateway/cluster2/node.istio-eastwest.cluster2.mesh.internal/15008 node.istio-eastwest.cluster2.mesh.internal          None     TCP
+istio-gateways      autogen.node.cluster2.cluster2.4f489252                                  172.30.0.4                                          None     TCP
+istio-eastwest-58c688b6f8-fqvqd cluster2 172.30.0.4
 ```
+
+ztunnel in cluster1 sends HBONE for cluster2 to `172.30.0.4`, the node that runs the cluster2 east-west pod, on the HBONE NodePort `31508`. Here the east-west pod runs on the control-plane node, so the HBONE and xDS addresses match. When the pod runs on a worker, they differ.
 
 ## Configure Ingress Gateway in cluster1 to route to the global service
 
@@ -348,13 +313,11 @@ kubectl wait --for=delete pod -l app=productpage -n bookinfo-frontends --timeout
 
 Send the request again. The ingress gateway in cluster1 now reaches productpage in cluster2 over the HBONE NodePort
 ```bash
-curl -s http://$INGRESS_ADDR/productpage -o /dev/null -w "%{http_code}\n"
 curl -s http://$INGRESS_ADDR/productpage | grep -oE "<title>.*</title>|cluster[12]" | sort | uniq -c
 ```
 
 Expected output:
 ```
-200
    1 <title>Simple Bookstore App</title>
    2 cluster2
 ```
@@ -379,8 +342,12 @@ kubectl scale deploy/productpage-v1 -n bookinfo-frontends --replicas 1 --context
 kubectl rollout status deploy/productpage-v1 -n bookinfo-frontends --watch --timeout=90s --context $KUBECONTEXT_CLUSTER1
 ```
 
-Send the request again. With a healthy local instance, `PreferNetwork` routes traffic back to cluster1, and the ztunnel log in cluster2 goes quiet. If you still see `cluster2`, wait a few seconds for the new pod to become ready in the mesh and retry
+Send the request again. With a healthy local instance, `PreferNetwork` routes traffic back to cluster1, and the ztunnel log in cluster2 goes quiet. The loop waits up to 30 seconds for the new pod to become ready in the mesh:
 ```bash
+for i in $(seq 1 15); do
+  curl -s http://$INGRESS_ADDR/productpage | grep -q cluster1 && break
+  sleep 2
+done
 curl -s http://$INGRESS_ADDR/productpage | grep -oE "<title>.*</title>|cluster[12]" | sort | uniq -c
 ```
 
@@ -392,8 +359,8 @@ Expected output:
 
 ## Next Steps
 At this point we have completed the following objectives
-- Exposed each cluster's east-west gateway as a NodePort Service
-- Peered the two clusters by pointing each remote peer at the other cluster's node IPs and NodePorts
+- Installed each cluster's east-west gateway from the `peering` Helm chart, as a NodePort Service with fixed NodePorts
+- Peered the two clusters with the same chart, pointing each remote peer at a node of the other cluster
 - Configured a globally available service using labels (productpage)
 - Reconfigured ingress to the global service hostname
 - Failed productpage over from cluster1 to cluster2 and back

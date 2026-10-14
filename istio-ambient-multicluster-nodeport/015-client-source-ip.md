@@ -244,7 +244,7 @@ IP=10.244.1.74
 RequestHeader=X-Forwarded-For:10.244.0.0
 ```
 
-`X-Forwarded-For` should hold the client address, `172.30.0.5`. It holds an address inside cluster1 instead: the pod bridge on the gateway's node (`10.244.1.1`), or the overlay address of the other node (`10.244.0.0`). kube-proxy SNATs NodePort traffic under `Cluster`, so the gateway never sees the client. `IP=10.244.1.74` is the edge gateway pod: the backend's L4 source is the gateway in every case.
+`X-Forwarded-For` should hold the client address, `172.30.0.5`, but holds a cluster1-internal address instead: kube-proxy SNATs NodePort traffic under `Cluster`. `IP=10.244.1.74` is the edge gateway pod, which is the backend's L4 source in every case.
 
 ## With externalTrafficPolicy Local
 
@@ -252,7 +252,10 @@ agentgateway builds the gateway's Service from the `service` field of the Gatewa
 ```bash
 kubectl patch enterpriseagentgatewayparameters ingress-edge-config -n agentgateway-system --context $KUBECONTEXT_CLUSTER1 \
   --type=merge -p '{"spec":{"service":{"spec":{"externalTrafficPolicy":"Local"}}}}'
-sleep 3
+for i in $(seq 1 20); do
+  [ "$(kubectl get svc ingress-edge -n agentgateway-system --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.spec.externalTrafficPolicy}')" = Local ] && break
+  sleep 1
+done
 kubectl get svc ingress-edge -n agentgateway-system --context $KUBECONTEXT_CLUSTER1 -o jsonpath='{.spec.externalTrafficPolicy}{"\n"}'
 echo "== via the gateway's node"; call_edge http://$GATEWAY_NODE_IP:$EDGE_PORT/
 echo "== via the other node";     call_edge http://$OTHER_NODE_IP:$EDGE_PORT/
@@ -382,9 +385,17 @@ RequestHeader=X-Forwarded-For:10.244.1.44
 no response
 ```
 
-`X-Forwarded-For` is now `10.244.1.44`, the client pod IP. haproxy saw the client before any SNAT and passed that address in the PROXY header. The direct request fails, because `mode: Strict` requires the header on every connection. Put every client of a PROXY protocol gateway behind the load balancer, and keep a separate gateway for clients that connect directly.
+`X-Forwarded-For` is now `10.244.1.44`, the client pod IP. haproxy saw the client before any SNAT and passed that address in the PROXY header. The direct request fails under `Strict`. Put every client of a PROXY protocol gateway behind the load balancer, and keep a separate gateway for clients that connect directly.
 
-The gateway log records the direct attempt as `proxy protocol error: PROXY protocol header missing`, with the address that connected.
+The gateway log records the direct attempt, with the address that connected:
+```bash
+kubectl logs deploy/ingress-edge -n agentgateway-system --context $KUBECONTEXT_CLUSTER1 --since=2m | grep -m1 "PROXY protocol header missing"
+```
+
+Expected output:
+```
+2026-10-14T02:53:48.561966Z	warn	proxy::gateway	proxy protocol error: PROXY protocol header missing	connection.id=6 src.addr=172.30.0.4:33627
+```
 
 Send a forged `X-Forwarded-For` through haproxy:
 ```bash
@@ -398,20 +409,19 @@ IP=10.244.1.74
 RequestHeader=X-Forwarded-For:10.244.1.44
 ```
 
-The backend sees the client address from the PROXY header, not `203.0.113.9`. The policy sets the header, so the value the client sent never reaches the backend.
-
-> **If the load balancer sends `X-Forwarded-For` instead.** An L7 load balancer that terminates HTTP adds the client to `X-Forwarded-For` rather than using PROXY protocol. Remove the `x-forwarded-for` transformation from the gateway policy, so the gateway forwards the load balancer's header unchanged, and accept connections to the gateway from the load balancer only: the gateway then passes on whatever header arrives.
+The backend sees the client address from the PROXY header, not `203.0.113.9`.
 
 ## Follow the Client IP Across Clusters
 
-agentgateway writes one `request` line per request to its log, with the source address it read in `src.addr`. Scale `echo` to zero in cluster1, so the gateway fails over to cluster2, call it through haproxy, and read the gateway's last request line:
+agentgateway writes one `request` line per request to its log, with the source address it read in `src.addr`. Scale `echo` to zero in cluster1, so the gateway fails over to cluster2, call it through haproxy, and read the key fields of the gateway's last request line:
 ```bash
 kubectl scale deploy/echo -n client-ip --replicas 0 --context $KUBECONTEXT_CLUSTER1
 kubectl wait --for=delete pod -l app=echo -n client-ip --timeout=60s --context $KUBECONTEXT_CLUSTER1
 sleep 3
 call_edge http://haproxy:8080/
 sleep 2
-kubectl logs deploy/ingress-edge -n agentgateway-system --context $KUBECONTEXT_CLUSTER1 --since=1m | grep "request gateway=" | tail -1
+kubectl logs deploy/ingress-edge -n agentgateway-system --context $KUBECONTEXT_CLUSTER1 --since=1m | grep "request gateway=" | tail -1 \
+  | grep -oE "(route|endpoint|src\.addr|http\.status)=[^ ]+"
 ```
 
 Expected output:
@@ -419,7 +429,10 @@ Expected output:
 Cluster=cluster2
 IP=10.244.1.30
 RequestHeader=X-Forwarded-For:10.244.1.44
-2026-10-13T19:55:06.100293Z	info	request gateway=agentgateway-system/ingress-edge listener=http route=client-ip/echo endpoint=echo.client-ip.mesh.internal:8080 src.addr=10.244.1.44:35074 http.method=GET http.host=haproxy http.path=/ http.version=HTTP/1.1 http.status=200 protocol=http duration=4ms
+route=client-ip/echo
+endpoint=echo.client-ip.mesh.internal:8080
+src.addr=10.244.1.44:35074
+http.status=200
 ```
 
 cluster2 served the request. Its L4 source, `IP=10.244.1.30`, is the cluster2 east-west gateway, and `X-Forwarded-For` still carries the client, `10.244.1.44`. In the gateway log, `src.addr` is the client address that the gateway read from the PROXY header, and `route` and `endpoint` show which route and global hostname served it. Ship these logs to your log pipeline to report client addresses per request.
@@ -438,7 +451,7 @@ kubectl rollout status deploy/echo -n client-ip --watch --timeout=90s --context 
 | On-premises, L3/L4 load balancer that keeps the source (for example BGP or ECMP to the nodes) | Forwards packets with the client source | `externalTrafficPolicy: Local` only |
 | AWS Network Load Balancer | Keeps the source for instance targets, or sends PROXY protocol v2 when you turn it on for the target group | `externalTrafficPolicy: Local`, or PROXY protocol on both sides |
 | Azure Standard Load Balancer | Forwards packets with the client source | `externalTrafficPolicy: Local` |
-| Any L7 load balancer that terminates HTTP | Adds `X-Forwarded-For` | Forward the load balancer's header unchanged, and accept traffic from the load balancer only |
+| Any L7 load balancer that terminates HTTP | Adds `X-Forwarded-For` | Remove the `x-forwarded-for` transformation from the gateway policy, so the gateway forwards the load balancer's header unchanged, and accept traffic from the load balancer only |
 
 The steps after the gateway are the same everywhere: the client IP travels in `X-Forwarded-For` to the backend, in the same cluster or across clusters, and the gateway log records it. Confirm the load balancer behavior for your own load balancer models and settings with the same `call_edge` test.
 

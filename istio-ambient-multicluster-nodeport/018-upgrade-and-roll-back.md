@@ -10,7 +10,8 @@
 ## Prerequisites
 - This lab assumes you have completed setup from labs `000-017`
 - Vegeta is installed: see [000-tools.md](000-tools.md#vegeta-cli-load-generator)
-- The NodePort pins from lab `013` are in place
+- The fixed east-west NodePorts from lab `007` are in place
+- Run the commands from the workshop directory, so that `source peering/peering.sh` finds the peering helpers
 
 Ensure the following environment variables are set:
 ```bash
@@ -21,7 +22,7 @@ export MESH_NAME_CLUSTER2=cluster2    # Recommended to keep as cluster2 for POC
 export FROM_VERSION=1.28.10-patch0
 export TO_VERSION=1.29.7-patch0
 export HELM_REPO=oci://us-docker.pkg.dev/soloio-img/istio-helm
-[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
+[ -n "$INGRESS_ADDR" ] || echo "WARNING: INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
 ```
 
 ## Background
@@ -35,39 +36,18 @@ Solo recommends [in-place upgrades with Helm](https://docs.solo.io/istio/1.30.x/
 | 3 | `istio-cni` | The `istio-cni-node` DaemonSet | New pods on a node wait until the new CNI agent is ready. Running pods are unaffected |
 | 4 | `ztunnel` | The `ztunnel` DaemonSet, one node at a time | Connections through a node's ztunnel close when that ztunnel restarts |
 
-The peered clusters keep working while one runs 1.28 and the other 1.29. The east-west gateways and the remote-peer Gateways stay as they are.
+The peered clusters keep working while one runs 1.28 and the other 1.29. The `peering-eastwest` and `peering-remote` releases from lab `007` stay at the `1.29.7-patch0` chart.
 
-> **Why not `helm upgrade --reuse-values`?** `--reuse-values` keeps the old release's values and skips the new chart's defaults. The 1.29 ztunnel chart reads a value that 1.28 never set, and the upgrade fails with `executing "ztunnel/templates/daemonset.yaml" at <.Values.peerCaCrl.enabled>: nil pointer evaluating interface {}.enabled`. Export the values you set with `helm get values`, change the version in that file, and pass it with `-f`, so the new chart's defaults fill in the rest.
+> **Why not `helm upgrade --reuse-values`?** `--reuse-values` skips the new chart's defaults, and the 1.29 ztunnel chart fails on a value that 1.28 never set. Export your values with `helm get values` and pass them with `-f` instead.
 
 ## Check the Mesh Before You Start
 
-Check the peering from both sides and confirm that the remote-peer Gateways match their peers. A ztunnel or istiod restart re-establishes every peering connection, so an upgrade is when drift from lab `013` would surface. The function is the same `check_peer_drift` from lab `013`:
+Check the peering from both sides and confirm that the remote-peer Gateways match their peers. An istiod restart re-establishes every xDS connection to the peers, so an upgrade is when drift from lab `013` would surface. `peering/peering.sh` loads `check_peer_drift` from lab `013`:
 ```bash
-check_peer_drift() {
-  local LOCAL_CTX=$1 PEER_CTX=$2 PEER_MESH=$3 GW WANT_HBONE WANT_XDS HAVE_HBONE HAVE_XDS PEER_NODE_IPS ADDR STATUS=OK
-  GW=istio-remote-peer-$PEER_MESH
-  WANT_HBONE=$(kubectl get svc istio-eastwest -n istio-gateways --context $PEER_CTX -o jsonpath='{.spec.ports[?(@.port==15008)].nodePort}')
-  WANT_XDS=$(kubectl get svc istio-eastwest -n istio-gateways --context $PEER_CTX -o jsonpath='{.spec.ports[?(@.port==15012)].nodePort}')
-  HAVE_HBONE=$(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.listeners[?(@.name=="cross-network")].port}')
-  HAVE_XDS=$(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.listeners[?(@.name=="xds-tls")].port}')
-  PEER_NODE_IPS=" $(kubectl get nodes --context $PEER_CTX -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address} {end}')"
-  if [ "$WANT_HBONE" != "$HAVE_HBONE" ] || [ "$WANT_XDS" != "$HAVE_XDS" ]; then
-    echo "DRIFT  $LOCAL_CTX/$GW: listener ports $HAVE_HBONE/$HAVE_XDS, $PEER_CTX NodePorts are $WANT_HBONE/$WANT_XDS"
-    STATUS=DRIFT
-  fi
-  for ADDR in $(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.addresses[*].value}'); do
-    case "$PEER_NODE_IPS" in
-      *" $ADDR "*) ;;
-      *) echo "DRIFT  $LOCAL_CTX/$GW: address $ADDR is not a node in $PEER_CTX"; STATUS=DRIFT ;;
-    esac
-  done
-  [ $STATUS = OK ] && echo "OK     $LOCAL_CTX/$GW: $(kubectl get gateway $GW -n istio-gateways --context $LOCAL_CTX -o jsonpath='{.spec.addresses[*].value}') ports $HAVE_HBONE/$HAVE_XDS"
-  [ $STATUS = OK ]
-}
-
+source peering/peering.sh
 check_peer_drift $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2 $MESH_NAME_CLUSTER2
 check_peer_drift $KUBECONTEXT_CLUSTER2 $KUBECONTEXT_CLUSTER1 $MESH_NAME_CLUSTER1
-./solo-istioctl multicluster check --contexts="$KUBECONTEXT_CLUSTER1,$KUBECONTEXT_CLUSTER2" 2>&1 | grep -A1 "Peers Check"
+./solo-istioctl multicluster check --contexts="$KUBECONTEXT_CLUSTER1,$KUBECONTEXT_CLUSTER2" 2>&1 | grep -A1 "Peers Check" | grep -v "^--$"
 for context in $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2; do
   helm list -n istio-system --kube-context $context -o yaml | grep -E "^  (name|chart):" | paste - - | awk -v c=$context '{print c, $2, $4}'
 done
@@ -75,8 +55,8 @@ done
 
 Expected output:
 ```
-OK     cluster1/istio-remote-peer-cluster2: 172.30.0.4 ports 31213/32512
-OK     cluster2/istio-remote-peer-cluster1: 172.30.0.2 ports 31377/31106
+OK     cluster1/istio-remote-peer-cluster2: 172.30.0.4:31512 connected
+OK     cluster2/istio-remote-peer-cluster1: 172.30.0.2:31512 connected
 ✅ Peers Check: all clusters connected
      ✅ Connected to cluster2 via 172.30.0.4
 ✅ Peers Check: all clusters connected
@@ -112,7 +92,19 @@ move_release() {
 }
 ```
 
-`sed -i.bak` works with both GNU and BSD `sed`.
+A new istiod rolls the gateways and waypoints it manages after `helm upgrade` returns. `wait_for_proxies` waits up to three minutes for every gateway and waypoint pod in a cluster to leave the old version:
+```bash
+wait_for_proxies() {
+  local CTX=$1 OLD=$2 i
+  for i in $(seq 1 36); do
+    kubectl get pods -A -l gateway.networking.k8s.io/gateway-name --context $CTX -o jsonpath='{..image}' | grep -q "$OLD" \
+      || { echo "$CTX: gateways and waypoints moved off $OLD"; return 0; }
+    sleep 5
+  done
+  echo "FAIL: $CTX still runs gateway or waypoint pods on $OLD"
+  return 1
+}
+```
 
 ## Start the Load
 
@@ -154,9 +146,9 @@ Waiting for deployment "istiod" rollout to finish: 1 old replicas are pending te
 deployment "istiod" successfully rolled out
 ```
 
-The new istiod updates the proxies it manages. Watch the waypoint and the east-west gateway move to the new image:
+The new istiod updates the proxies it manages. Wait for the waypoint and the east-west gateway to move to the new image:
 ```bash
-sleep 20
+wait_for_proxies $KUBECONTEXT_CLUSTER2 $FROM_VERSION
 kubectl get pods -n bookinfo-backends -l gateway.networking.k8s.io/gateway-name=waypoint --context $KUBECONTEXT_CLUSTER2 \
   -o jsonpath='{range .items[*]}{.metadata.name} {.spec.containers[0].image}{"\n"}{end}'
 kubectl get pods -n istio-gateways --context $KUBECONTEXT_CLUSTER2 \
@@ -165,6 +157,7 @@ kubectl get pods -n istio-gateways --context $KUBECONTEXT_CLUSTER2 \
 
 Expected output:
 ```
+cluster2: gateways and waypoints moved off 1.28.10-patch0
 waypoint-6fb5c8dc94-dxjzb us-docker.pkg.dev/soloio-img/istio/proxyv2:1.29.7-patch0-solo-distroless
 istio-eastwest-78847468c9-n7dqc us-docker.pkg.dev/soloio-img/istio/ztunnel:1.29.7-patch0-solo-distroless
 ```
@@ -177,7 +170,7 @@ move_release $KUBECONTEXT_CLUSTER2 ztunnel   ztunnel $FROM_VERSION $TO_VERSION
 
 Check the mixed-version mesh: cluster1 on 1.28, cluster2 on 1.29:
 ```bash
-./solo-istioctl multicluster check --contexts="$KUBECONTEXT_CLUSTER1,$KUBECONTEXT_CLUSTER2" 2>&1 | grep -A1 "Peers Check"
+./solo-istioctl multicluster check --contexts="$KUBECONTEXT_CLUSTER1,$KUBECONTEXT_CLUSTER2" 2>&1 | grep -A1 "Peers Check" | grep -v "^--$"
 curl -s http://$INGRESS_ADDR/productpage | grep -oE "cluster[12]" | head -1
 load_report
 ```
@@ -194,7 +187,7 @@ Success       [ratio]                           100.00%
 Status Codes  [code:count]                      200:628  
 ```
 
-Every request so far crossed from agentgateway in cluster1, with its 1.28 mesh peers, to the 1.29 data plane in cluster2. In this run all of them succeeded.
+Every request so far crossed from agentgateway in cluster1, with its 1.28 mesh peers, to the 1.29 data plane in cluster2.
 
 ## Upgrade cluster1
 
@@ -210,7 +203,7 @@ move_release $KUBECONTEXT_CLUSTER1 ztunnel    ztunnel $FROM_VERSION $TO_VERSION
 
 Check that every Istio image in both clusters is now 1.29, and that the peering and the load are healthy:
 ```bash
-sleep 20
+wait_for_proxies $KUBECONTEXT_CLUSTER1 $FROM_VERSION
 for context in $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2; do
   echo "== $context"
   kubectl get pods -A --context $context --field-selector=status.phase=Running \
@@ -223,6 +216,7 @@ load_report
 
 Expected output (the success ratio can be below 100 percent, as above):
 ```
+cluster1: gateways and waypoints moved off 1.28.10-patch0
 == cluster1
    2 install-cni:1.29.7-patch0-solo-distroless
    1 pilot:1.29.7-patch0-solo-distroless
@@ -233,16 +227,14 @@ Expected output (the success ratio can be below 100 percent, as above):
    1 pilot:1.29.7-patch0-solo-distroless
    1 proxyv2:1.29.7-patch0-solo-distroless
    3 ztunnel:1.29.7-patch0-solo-distroless
-OK     cluster1/istio-remote-peer-cluster2: 172.30.0.4 ports 31213/32512
-OK     cluster2/istio-remote-peer-cluster1: 172.30.0.2 ports 31377/31106
+OK     cluster1/istio-remote-peer-cluster2: 172.30.0.4:31512 connected
+OK     cluster2/istio-remote-peer-cluster1: 172.30.0.2:31512 connected
 Requests      [total, rate, throughput]         1242, 10.01, 10.01
 Success       [ratio]                           100.00%
 Status Codes  [code:count]                      200:1242  
 ```
 
-Each cluster has three ztunnel-image pods, two node ztunnels and the east-west gateway, and one `proxyv2` pod, the waypoint. The agentgateway pods use their own images, so the list does not show them. The NodePort pins from lab `013` kept the east-west NodePorts unchanged through the upgrade, so the drift check still passes. In this run both upgrades finished with no failed requests.
-
-> **New in 1.29: endpoint health metrics.** ztunnel 1.29 exports `istio_outlier_detection_endpoints` and `istio_outlier_detection_endpoints_unhealthy`. They count the endpoints that ztunnel has taken out of rotation, such as the cluster1 productpage pod in lab `008` after policy rejections. Add `istio_outlier_detection_.*` to the lab `011` keep-list to chart them.
+Each cluster has three ztunnel-image pods, two node ztunnels and the east-west gateway, and one `proxyv2` pod, the waypoint. The agentgateway pods use their own images, so the list does not show them. The fixed NodePorts from lab `007` kept the xDS ports unchanged through the upgrade, and both peers reconnected to the new istiod, so the drift check still passes.
 
 ## Roll Back to 1.28
 
@@ -255,17 +247,21 @@ for context in $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2; do
   move_release $context istio-cni cni     $TO_VERSION $FROM_VERSION
   move_release $context ztunnel   ztunnel $TO_VERSION $FROM_VERSION
 done
-sleep 20
+for context in $KUBECONTEXT_CLUSTER1 $KUBECONTEXT_CLUSTER2; do
+  wait_for_proxies $context $TO_VERSION
+done
 ```
 
 Stop the load and read the final report:
 ```bash
 kill -INT $LOAD_PID
-sleep 2
+wait $LOAD_PID 2>/dev/null
 vegeta report -type=text < upgrade-load.bin | grep -E "^(Requests|Success|Status Codes)"
-vegeta encode --to csv < upgrade-load.bin | awk -F, '$2 != 200 { print $1, $2, $6 }' | while read TS CODE ERR; do
+vegeta encode --to csv < upgrade-load.bin | awk -F, '$2 != 200 { print $1, $2, $6 }' > upgrade-failures.txt
+while read TS CODE ERR; do
   echo "$(date -r $((TS / 1000000000)) +%T 2>/dev/null || date -d @$((TS / 1000000000)) +%T) $CODE $ERR"
-done
+done < upgrade-failures.txt
+echo "$(wc -l < upgrade-failures.txt | tr -d ' ') failed requests"
 ```
 
 Expected output (the request count differs with how long the upgrade took):
@@ -273,9 +269,10 @@ Expected output (the request count differs with how long the upgrade took):
 Requests      [total, rate, throughput]         2152, 10.00, 10.00
 Success       [ratio]                           100.00%
 Status Codes  [code:count]                      200:2152  
+0 failed requests
 ```
 
-The second command prints one line per failed request, and printed none in this run. In two other validation runs of the same steps, 2 requests failed each time:
+The loop prints one line per failed request, then the count. A failure during a proxy restart looks like this:
 ```
 17:32:45 503 503 Service Unavailable
 17:33:12 503 503 Service Unavailable
@@ -315,7 +312,7 @@ Bring productpage back in cluster1, and remove the load results and the values f
 ```bash
 kubectl scale deploy/productpage-v1 -n bookinfo-frontends --replicas 1 --context $KUBECONTEXT_CLUSTER1
 kubectl rollout status deploy/productpage-v1 -n bookinfo-frontends --watch --timeout=90s --context $KUBECONTEXT_CLUSTER1
-rm -f upgrade-load.bin upgrade-load-snapshot.bin
+rm -f upgrade-load.bin upgrade-load-snapshot.bin upgrade-failures.txt
 rm -rf upgrade-values
 ```
 

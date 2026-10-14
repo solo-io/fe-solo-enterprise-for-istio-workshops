@@ -7,8 +7,6 @@
 - Measure the scrape footprint of each cluster
 - Give each team a namespace dashboard in Grafana that covers both clusters
 
-![](../images/observability-federation-1.png)
-
 ## Prerequisites
 - This lab assumes you have completed setup from labs `000-010`
 
@@ -16,7 +14,7 @@ Ensure the following environment variables are set:
 ```bash
 export KUBECONTEXT_CLUSTER1=cluster1  # Replace with your actual kubectl context name
 export KUBECONTEXT_CLUSTER2=cluster2  # Replace with your actual kubectl context name
-[ -n "$INGRESS_ADDR" ] || echo "⚠️  INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
+[ -n "$INGRESS_ADDR" ] || echo "WARNING: INGRESS_ADDR is not set. Run the 'Reach the ingress gateway' block from lab 006 in this shell, or its port-forward fallback."
 ```
 
 ## Background
@@ -41,7 +39,7 @@ This lab builds a two-tier pipeline:
 | cluster1 | `grafana` | Dashboards. Queries only the central Prometheus |
 | cluster2 | `prometheus` (agent mode) | Scrapes cluster2 and forwards every sample. Keeps a short write-ahead log only |
 
-The manifests are in `observability/`. In each scrape job, `metric_relabel_configs` keeps only the `istio_*` request and TCP series, the agentgateway request counter and latency histogram, a few `pilot_*` control plane series, the waypoint retry counter, and process memory and CPU. Prometheus drops everything else the components expose before it stores or forwards a sample. Each job also sets a `cluster` label on every series, so queries and dashboards can tell clusters apart after the data lands in one place.
+The manifests are in `observability/`. Each scrape job has a keep-list (`metric_relabel_configs`) that drops every series the dashboards do not use at scrape time, and adds a `cluster` label to every series, so queries can tell clusters apart after the data lands in one place.
 
 > **Why send metrics over the mesh?** The agent in cluster2 writes to `prometheus.monitoring.mesh.internal`, the global hostname of the central Prometheus. The writes cross the same east-west NodePort as the rest of the mesh traffic, encrypted with mTLS, and an `AuthorizationPolicy` decides which clusters may write. No extra firewall rule, load balancer or VPC route is needed for metrics. The trade-off: if peering breaks, cluster2 metrics stop arriving while the outage lasts. The agent buffers samples in its write-ahead log (two hours by default) and catches up when the path returns. If your metrics must survive a mesh outage, point `remote_write` at a separate address instead.
 
@@ -70,12 +68,12 @@ autogen.monitoring.prometheus   ["prometheus.monitoring.mesh.internal"]   MESH_I
 The agent uses the same scrape job with `cluster: cluster2`, runs with `--agent`, and adds one `remote_write` target:
 ```bash
 grep -A2 "remote_write:" observability/prometheus-agent-cluster2.yaml
-grep -A3 "\- --agent" observability/prometheus-agent-cluster2.yaml
+grep -A1 "\- --agent" observability/prometheus-agent-cluster2.yaml
 kubectl apply -f observability/prometheus-agent-cluster2.yaml --context $KUBECONTEXT_CLUSTER2
 kubectl rollout status deploy/prometheus -n monitoring --watch --timeout=120s --context $KUBECONTEXT_CLUSTER2
 ```
 
-Expected output (abridged):
+Expected output:
 ```
     remote_write:
     # The central Prometheus, reached through its global service hostname
@@ -84,9 +82,9 @@ Expected output (abridged):
         - --storage.agent.path=/prometheus
 ```
 
-## Allow Only Known Writers
+## Allow Only Known Clients
 
-The central Prometheus accepts writes from anyone who can reach it. Allow only Grafana in cluster1 and the agent in cluster2:
+The central Prometheus accepts reads and writes from any caller. Allow only Grafana in cluster1 and the agent in cluster2:
 ```bash
 cat observability/prometheus-auth.yaml
 kubectl apply -f observability/prometheus-auth.yaml --context $KUBECONTEXT_CLUSTER1
@@ -131,11 +129,17 @@ promql() {
 }
 ```
 
-Wait until the agent's first writes arrive, give both instances time to finish a few scrape rounds, then count the healthy scrape targets in each cluster:
+Count the healthy scrape targets in each cluster. The loop checks once per scrape interval (15 seconds) and stops when cluster2 samples have arrived and the counts stay the same for two checks in a row:
 ```bash
-until promql 'sum by (cluster) (up)' | grep -q cluster2; do sleep 5; done
-sleep 45
-promql 'sum by (cluster) (up)'
+prev=""
+for i in $(seq 1 40); do
+  cur=$(promql 'sum by (cluster) (up)')
+  echo "$cur" | grep -q cluster2 && [ "$cur" = "$prev" ] && break
+  prev=$cur
+  sleep 15
+done
+echo "$cur" | grep -q cluster2 || echo "FAIL: no samples from cluster2. Check the Prometheus agent logs in cluster2."
+echo "$cur"
 ```
 
 Expected output:
@@ -144,20 +148,20 @@ Expected output:
 "cluster":"cluster2" => 8
 ```
 
-Each cluster has two ztunnels, istiod, one istio-cni pod per node, the east-west gateway, the `bookinfo-backends` waypoint and the Prometheus self-scrape. cluster1 also has the agentgateway ingress pod. The keep-list scrapes only agentgateway's gateway pods, not its controller or add-on services. The istio-cni pods carry the same annotation. Their series do not pass the keep-list, so they cost almost nothing.
+Each cluster scrapes two ztunnels, two istio-cni pods, istiod, the east-west gateway, the `bookinfo-backends` waypoint and Prometheus itself. cluster1 also scrapes the agentgateway ingress pod.
 
 Show request rates by reporting cluster:
 ```bash
-promql 'sum by (cluster, reporter) (rate(istio_requests_total[2m]))'
+promql 'round(sum by (cluster, reporter) (rate(istio_requests_total[2m])), 0.01)'
 ```
 
 Expected output (rates differ on your machine):
 ```
-"cluster":"cluster1","reporter":"waypoint" => 0.7523737869163151
-"cluster":"cluster1","reporter":"source" => 1.219047619047619
-"cluster":"cluster1","reporter":"destination" => 1.2571428571428571
+"cluster":"cluster1","reporter":"waypoint" => 0.75
+"cluster":"cluster1","reporter":"source" => 1.22
+"cluster":"cluster1","reporter":"destination" => 1.26
 "cluster":"cluster2","reporter":"waypoint" => 0
-"cluster":"cluster2","reporter":"source" => 0.6660694444444444
+"cluster":"cluster2","reporter":"source" => 0.67
 ```
 
 If a reporter is missing from the output, wait 30 seconds and run the query again. `rate()` needs two samples inside the 2-minute window, and a series that appeared in the latest scrape has only one.
@@ -167,12 +171,12 @@ The same request can be counted by more than one reporter: the source ztunnel, t
 agentgateway reports its own request metrics, with the gateway's view of each request: the route that matched, the backend it picked, the status code, and a `reason` that tells an upstream response from a gateway-side failure such as `NoHealthyBackend`. Send 30 seconds of traffic, so Prometheus scrapes the gateway at least twice while it serves, then show the ingress request rate by route and status. `> 0` hides routes with no traffic in the last two minutes:
 ```bash
 for i in $(seq 1 60); do curl -s -o /dev/null http://$INGRESS_ADDR/productpage; sleep 0.5; done
-promql 'sum by (route, backend, status, reason) (rate(agentgateway_requests_total[2m])) > 0'
+promql 'round(sum by (route, backend, status, reason) (rate(agentgateway_requests_total[2m])), 0.01) > 0'
 ```
 
 Expected output (rates differ on your machine):
 ```
-"backend":"productpage.bookinfo-frontends.mesh.internal:9080","reason":"Upstream","route":"bookinfo-frontends/bookinfo-route","status":"200" => 1.2666787302736218
+"backend":"productpage.bookinfo-frontends.mesh.internal:9080","reason":"Upstream","route":"bookinfo-frontends/bookinfo-route","status":"200" => 1.27
 ```
 
 `agentgateway_requests_total` has no `source_workload` or `destination_workload` labels. Use it for the ingress view, by route and status, and the `istio_*` metrics for workload-to-workload traffic inside the mesh.
@@ -183,7 +187,7 @@ Compare how many samples each cluster scrapes with how many it keeps after the k
 ```bash
 echo "scraped:";  promql 'sum by (cluster) (scrape_samples_scraped{job="mesh"})'
 echo "kept:";     promql 'sum by (cluster) (scrape_samples_post_metric_relabeling{job="mesh"})'
-echo "memory (MiB):"; promql 'process_resident_memory_bytes{job="prometheus"} / 1024 / 1024'
+echo "memory (MiB):"; promql 'round(sum by (cluster) (process_resident_memory_bytes{job="prometheus"}) / 1048576)'
 ```
 
 Expected output (numbers differ on your machine):
@@ -195,8 +199,8 @@ kept:
 "cluster":"cluster1" => 858
 "cluster":"cluster2" => 577
 memory (MiB):
-"cluster":"cluster1","instance":"localhost:9090","job":"prometheus","namespace":"monitoring" => 105.8203125
-"cluster":"cluster2","instance":"localhost:9090","job":"prometheus","namespace":"monitoring" => 102.49609375
+"cluster":"cluster1" => 106
+"cluster":"cluster2" => 102
 ```
 
 Both clusters keep about a third of the samples they scrape, and the rest stays out of storage and off the network. cluster1 keeps more samples because it serves more traffic. Most kept samples are latency histogram buckets (`istio_request_duration_milliseconds_bucket`), and their count grows with the number of distinct caller and service pairs, so watch that series as the mesh grows and aggregate it with recording rules if you need fewer series.
@@ -256,7 +260,7 @@ The two-tier shape stays the same with hundreds of clusters:
 - Each workload cluster runs only the agent. Its cost grows with the nodes and gateways in that cluster, because ambient scrapes ztunnel per node and each gateway, and leaves application pods alone.
 - The central tier holds all the state. Replace the single central Prometheus with a remote-write receiver built for many writers and long retention, such as Thanos Receive, Mimir or Cortex. The agents change only their `remote_write` URL.
 - The keep-list controls most of the cost. Review it with the dashboard and alert owners, because each series you add is multiplied by the number of clusters.
-- Remote write sends each sample once, compressed. If the central tier is in another region or account, the cloud provider bills the metrics traffic as cross-zone or cross-region data, so keep the keep-list short and run one central tier per region if the bill matters.
+- Remote write sends each sample once, compressed. Cross-region remote write is billed as data transfer, so run one central tier per region.
 
 ## Cleanup
 
