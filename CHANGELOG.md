@@ -1,6 +1,6 @@
 # Changelog
 
-0.0.8 - (10-14-26)
+0.0.8 - (10-15-26)
 ---
 - Rewrite `istio-ambient-multicluster-nodeport/014-per-hostname-certificates.md` so app teams own their hostnames
 - Add a second team (`shop`) to lab `014`, onboarded by a namespace label
