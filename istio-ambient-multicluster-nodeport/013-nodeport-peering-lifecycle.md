@@ -321,4 +321,4 @@ At this point we have completed the following objectives:
 - Confirmed that the fixed NodePorts survive a recreated east-west Service
 - Took a cluster out of the mesh and brought it back with a loop that works for any number of clusters
 
-In the next step `014` we will serve per-hostname certificates from cert-manager on the ingress gateway
+In the next step `014` we will let app teams attach their own hostnames and certificates to the shared ingress gateway

@@ -1,5 +1,12 @@
 # Changelog
 
+0.0.8 - (10-15-26)
+---
+- Rewrite `istio-ambient-multicluster-nodeport/014-per-hostname-certificates.md` so app teams own their hostnames
+- Add a second team (`shop`) to lab `014`, onboarded by a namespace label
+- Update `020-cleanup.md` (the `shop` namespace), `README.md`, `000-introduction.md` and the lab `013` next step
+- Add `PARKING-LOT.md` to `.gitignore`
+
 0.0.7 - (10-14-26)
 ---
 - Add `istio-oss-sidecar-to-enterprise-ambient/005-sidecar-ambient-interop.md`

@@ -15,7 +15,7 @@
 - Collect mesh metrics from both clusters into one Prometheus and Grafana
 - Move a stable hostname between clusters by route weight, under load
 - Follow the east-west gateway across nodes, and detect and repair a lost xDS link to a peer
-- Serve per-hostname ECDSA P-256 certificates from cert-manager
+- Let app teams serve their own hostnames and ECDSA P-256 certificates from cert-manager on the shared ingress gateway
 - Carry the real client IP through the ingress gateway and across clusters
 - Send egress through dedicated nodes with stable source IPs
 - Convert ingress-nginx and Istio ingress objects to Gateway API

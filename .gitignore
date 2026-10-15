@@ -73,3 +73,6 @@ docs/superpowers/
 
 # Ingress migration lab (016): downloaded release binary
 **/ingress2gateway
+
+# Local parking lot for deferred lab topics and findings
+PARKING-LOT.md
