@@ -156,7 +156,7 @@ The gateway runs as the `ingress` service account in `agentgateway-system`, so w
 
 ## Cleanup
 
-No cleanup is needed. The gateway serves every later lab, and lab `020` removes it.
+No cleanup is needed. The gateway serves every later lab, and lab `021` removes it.
 
 ## Next Steps
 At this point we have completed the following objectives:

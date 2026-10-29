@@ -499,7 +499,7 @@ kubectl delete secret internal-root-ca -n cert-manager --context $KUBECONTEXT_CL
 rm -f internal-root-ca.pem
 ```
 
-Uninstall cert-manager. The CRDs stay, because removing a CRD deletes every resource of that kind. Lab `020` removes them:
+Uninstall cert-manager. The CRDs stay, because removing a CRD deletes every resource of that kind. Lab `021` removes them:
 ```bash
 helm uninstall cert-manager -n cert-manager --kube-context $KUBECONTEXT_CLUSTER1 --ignore-not-found
 kubectl delete namespace cert-manager --context $KUBECONTEXT_CLUSTER1 --ignore-not-found

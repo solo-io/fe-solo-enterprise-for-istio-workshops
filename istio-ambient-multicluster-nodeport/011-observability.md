@@ -264,7 +264,7 @@ The two-tier shape stays the same with hundreds of clusters:
 
 ## Cleanup
 
-No cleanup is needed. The monitoring stack stays in place for lab `018`, where it shows error rates during the upgrade, and lab `020` removes it.
+No cleanup is needed. The monitoring stack stays in place for lab `018`, where it shows error rates during the upgrade, and lab `021` removes it.
 
 > **Removing it now?**
 > ```bash

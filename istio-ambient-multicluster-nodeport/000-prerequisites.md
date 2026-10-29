@@ -154,6 +154,11 @@ docker pull fortio/fortio:1.75.3
 docker pull docker.io/istio/app:1.28.10
 ```
 
+**Kafka Images (lab `020`):**
+```bash
+docker pull apache/kafka:3.9.1
+```
+
 **Observability Images (lab `011`):**
 ```bash
 docker pull prom/prometheus:v3.15.0

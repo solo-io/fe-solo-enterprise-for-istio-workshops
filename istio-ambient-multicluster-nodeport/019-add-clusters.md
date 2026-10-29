@@ -682,7 +682,7 @@ NAMESPACE          SERVICE NAME                           SERVICE VIP           
 bookinfo-frontends autogen.bookinfo-frontends.productpage 240.240.0.1,2001:2::1 None     2/2
 ```
 
-The global productpage is back to two endpoints. Istio, Bookinfo and the `peering-eastwest` release stay installed on cluster3 and cluster4. Lab `020` removes them when you add the two contexts to its cluster list.
+The global productpage is back to two endpoints. Istio, Bookinfo and the `peering-eastwest` release stay installed on cluster3 and cluster4. Lab `021` removes them when you add the two contexts to its cluster list.
 
 ## Next Steps
 At this point we have completed the following objectives:
@@ -694,4 +694,4 @@ At this point we have completed the following objectives:
 - Failed productpage over across four clusters
 - Ran the drift check for all twelve remote-peer Gateways
 
-In the next step `020` we will remove everything this workshop created
+In the next step `020` we will route Kafka egress through a waypoint
