@@ -49,7 +49,8 @@ Hands-on workshop for deploying Solo Enterprise for Istio Ambient Mesh across tw
 | [017-migrate-ingress-nginx.md](017-migrate-ingress-nginx.md) | Convert ingress-nginx and Istio ingress objects to Gateway API for agentgateway with `ingress2gateway`, including capture-group rewrites |
 | [018-upgrade-and-roll-back.md](018-upgrade-and-roll-back.md) | In-place upgrade from 1.28 to 1.29 under load, and roll back |
 | [019-add-clusters.md](019-add-clusters.md) | Add two clusters and peer all four over NodePort: reachability matrix, trust domains, four-way failover |
-| [020-cleanup.md](020-cleanup.md) | Teardown |
+| [020-egress-to-kafka.md](020-egress-to-kafka.md) | Egress to a Kafka broker outside the mesh through a TCP `ServiceEntry` and waypoint: advertised listeners, identity policy, and the limit of L4 control |
+| [021-cleanup.md](021-cleanup.md) | Teardown |
 
 ## Getting Started
 

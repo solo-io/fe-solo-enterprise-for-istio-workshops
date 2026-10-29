@@ -16,7 +16,7 @@ export KUBECONTEXT_CLUSTER4=cluster4  # Replace with your actual kubectl context
 CLUSTERS+=($KUBECONTEXT_CLUSTER3 $KUBECONTEXT_CLUSTER4)
 ```
 
-## Add-on labs (labs `008`-`019`)
+## Add-on labs (labs `008`-`020`)
 
 Each add-on lab removes its own resources in its `## Cleanup` section. The loop below removes anything left over, for example after a lab you stopped partway through. Every delete uses `--ignore-not-found`, so the loop is safe to run when a lab already cleaned up:
 
@@ -25,8 +25,9 @@ for CONTEXT in "${CLUSTERS[@]}"; do
   echo "Cleaning up add-on labs in $CONTEXT..."
 
   # Namespaces: tenant-a (008), perf (010), monitoring (011), cert-manager and shop (014),
-  # client-ip and outside (015), egress and partner (016), grpc-echo and api-echo (017)
-  kubectl delete namespace tenant-a perf monitoring cert-manager shop client-ip outside egress partner grpc-echo api-echo \
+  # client-ip and outside (015), egress and partner (016), grpc-echo and api-echo (017),
+  # kafka-egress and kafka-clients (020)
+  kubectl delete namespace tenant-a perf monitoring cert-manager shop client-ip outside egress partner grpc-echo api-echo kafka-egress kafka-clients kafka \
     --context $CONTEXT --ignore-not-found
 
   # Prometheus RBAC (011)

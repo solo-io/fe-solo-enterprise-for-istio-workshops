@@ -21,6 +21,7 @@
 - Convert ingress-nginx and Istio ingress objects to Gateway API
 - Upgrade both clusters from 1.28 to 1.29 under load, and roll back
 - Add two clusters and peer all four in a full NodePort mesh
+- Send Kafka egress through a waypoint, with an advertised listener that keeps clients on the mesh path, and reach it from outside through the agentgateway ingress
 
 # Use Cases
 - Zero Trust (mTLS)
@@ -38,6 +39,7 @@
 - TLS certificates with cert-manager
 - Client source IP preservation
 - Egress control with stable IPs
+- Egress to Kafka
 - Ingress migration to Gateway API
 - Upgrades and rollback
 - Scaling the mesh past two clusters

@@ -1,5 +1,13 @@
 # Changelog
 
+0.0.9 - (10-28-26)
+---
+- Add `istio-ambient-multicluster-nodeport/020-egress-to-kafka.md`: Kafka egress through a TCP `ServiceEntry` and egress waypoint, the advertised listener, an identity `AuthorizationPolicy`, and waypoint access logging that shows denied connections
+- Add an ingress section to lab `020`: an agentgateway TCP listener and `TCPRoute` to the egress `ServiceEntry`, with an external Kafka client (needs Gateway API experimental CRDs 1.6.0)
+- Add `images/kafka-egress-1.png` for lab `020`
+- Move `020-cleanup.md` to `021-cleanup.md`, with every lab-number reference updated, and add the Kafka namespaces to its sweep
+- Update `istio-ambient-multicluster-nodeport` `README.md`, `000-introduction.md` and `000-prerequisites.md` (`apache/kafka` image), the lab `019` next step, and the root `README.md`
+
 0.0.8 - (10-15-26)
 ---
 - Rewrite `istio-ambient-multicluster-nodeport/014-per-hostname-certificates.md` so app teams own their hostnames

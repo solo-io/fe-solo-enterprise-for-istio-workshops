@@ -404,7 +404,7 @@ Remove the `tenant-a` namespace:
 kubectl delete namespace tenant-a --context $KUBECONTEXT_CLUSTER1 --ignore-not-found
 ```
 
-The deny-all baseline, the four Bookinfo allow policies and the `STRICT` PeerAuthentication stay in place for the rest of the workshop. Later labs add the policies their own workloads need, the same way a team would in production. Lab `020` removes them.
+The deny-all baseline, the four Bookinfo allow policies and the `STRICT` PeerAuthentication stay in place for the rest of the workshop. Later labs add the policies their own workloads need, the same way a team would in production. Lab `021` removes them.
 
 ## Next Steps
 At this point we have completed the following objectives:
